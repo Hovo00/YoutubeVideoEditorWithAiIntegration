@@ -12,6 +12,13 @@ class FFmpegNotFoundError(RuntimeError):
     pass
 
 
+# Software x264 is CPU-bound on this machine (no usable hardware encoder);
+# "veryfast" trades a small amount of quality for a large speed gain over
+# "medium". Tune these if you want to trade speed for quality.
+X264_PRESET = "veryfast"
+X264_CRF = "20"
+
+
 def get_duration(video_path: str) -> float:
     command = [
         "ffprobe",
@@ -75,8 +82,8 @@ def render_video(
             "-to", str(end),
             "-i", input_path,
             "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "18",
+            "-preset", X264_PRESET,
+            "-crf", X264_CRF,
             *audio_codec_args,
             "-movflags", "+faststart",
             output_path,
@@ -119,8 +126,8 @@ def render_video(
             command += ["-map", "[outa]"]
         command += [
             "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "18",
+            "-preset", X264_PRESET,
+            "-crf", X264_CRF,
             *audio_codec_args,
             "-movflags", "+faststart",
             output_path,

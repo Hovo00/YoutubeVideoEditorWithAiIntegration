@@ -1,0 +1,145 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #111;
+  color: #eee;
+}
+
+.app {
+  max-width: 900px;
+  margin: auto;
+  padding: 30px;
+}
+
+header {
+  margin-bottom: 30px;
+}
+
+header h1 {
+  margin-bottom: 5px;
+}
+
+header p {
+  color: #aaa;
+}
+
+.step {
+  background: #1b1b1b;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.step h2 {
+  margin-top: 0;
+}
+
+.muted {
+  color: #999;
+  font-size: 0.9em;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 12px 0;
+}
+
+button {
+  border: none;
+  padding: 11px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+  background: #2563eb;
+  color: white;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input[type="file"] {
+  color: #eee;
+}
+
+.video {
+  width: 100%;
+  max-height: 400px;
+  background: black;
+  margin-top: 12px;
+  display: block;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+  background: #111;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 12px;
+  font-family: monospace;
+}
+
+.warnings {
+  margin-top: 10px;
+}
+
+.warnings div {
+  background: #2a1c1c;
+  border-left: 4px solid #e55;
+  padding: 8px 12px;
+  margin-top: 6px;
+  font-size: 0.9em;
+}
+
+.summary {
+  margin-bottom: 14px;
+  font-size: 0.95em;
+}
+
+.summary b {
+  color: #fff;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+}
+
+th, td {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid #333;
+  font-size: 0.9em;
+}
+
+th {
+  color: #999;
+  font-weight: normal;
+}
+
+td.time {
+  font-family: monospace;
+  color: #ccc;
+  white-space: nowrap;
+}
+
+.download {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 12px 18px;
+  background: #2563eb;
+  color: white;
+  text-decoration: none;
+  border-radius: 6px;
+  font-weight: bold;
+}

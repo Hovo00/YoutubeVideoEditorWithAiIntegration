@@ -1,0 +1,9 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+media/uploads/*
+media/outputs/*
+!media/uploads/.gitkeep
+!media/outputs/.gitkeep

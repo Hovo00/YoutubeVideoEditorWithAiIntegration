@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VideoEditorY</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+  <div class="app">
+
+    <header>
+      <h1>VideoEditorY</h1>
+      <p>Edit a video by editing its transcript.</p>
+    </header>
+
+    <section class="step" id="step1">
+      <h2>1. Load video</h2>
+      <div class="row">
+        <input type="file" id="videoInput" accept="video/*" />
+        <button id="loadBtn">Load video</button>
+      </div>
+      <video id="preview" class="video" controls></video>
+      <div id="videoInfo" class="muted"></div>
+    </section>
+
+    <section class="step" id="step2" style="display:none">
+      <h2>2. Paste the AI's reply</h2>
+      <p class="muted">
+        Paste the full structured reply you got back from ChatGPT (or another AI)
+        after giving it <code>AI_EDITING_INSTRUCTIONS.md</code> plus your instruction
+        and transcript — including its <code>## REMOVED</code> section.
+      </p>
+      <textarea id="aiResponse" rows="14" placeholder="## REMOVED
+
+00:03:35.497 --> 00:03:39.040 | &quot;[музыка]&quot; | Music-only cue
+
+## EDITED_TRANSCRIPT
+...
+"></textarea>
+      <div class="row">
+        <button id="parseBtn">Parse cuts</button>
+      </div>
+      <div id="warnings" class="warnings"></div>
+    </section>
+
+    <section class="step" id="step3" style="display:none">
+      <h2>3. Review &amp; render</h2>
+      <div id="summary" class="summary"></div>
+
+      <table id="cutsTable">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Start</th>
+            <th>End</th>
+            <th>Dur.</th>
+            <th>Text / reason</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+
+      <div class="row">
+        <button id="renderBtn">Render edited video</button>
+      </div>
+
+      <div id="renderStatus" class="muted"></div>
+      <a id="downloadLink" class="download" style="display:none" target="_blank">Download edited video</a>
+      <video id="resultPreview" class="video" controls style="display:none"></video>
+    </section>
+
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

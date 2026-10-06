@@ -31,7 +31,10 @@ def main():
 
     def _open_browser():
         time.sleep(1.0)
-        webbrowser.open(url)
+        try:
+            webbrowser.open(url)
+        except Exception:
+            print(f"Could not auto-open a browser — open {url} manually.")
 
     threading.Thread(target=_open_browser, daemon=True).start()
 

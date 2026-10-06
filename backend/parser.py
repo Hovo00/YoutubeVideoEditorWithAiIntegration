@@ -8,11 +8,26 @@ import re
 from dataclasses import dataclass, field
 
 TIMESTAMP_RE = re.compile(r"(\d{1,2}):(\d{2}):(\d{2})[.,](\d{1,3})")
-REMOVED_LINE_TS_RE = re.compile(
+TIMESTAMP_PAIR_RE = r"\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}"
+
+# A single REMOVED entry: a timestamp range, an optional quoted cue text, and
+# a reason — all lazily captured up to wherever the *next* timestamp range
+# starts (or end of text). This works whether the AI put one entry per line
+# or ran them all together as one paragraph (both happen in practice).
+REMOVED_ENTRY_RE = re.compile(
     r"(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3})"
+    r"\s*\|?\s*"
+    r'(?:"([^"]*)")?'
+    r"\s*\|?\s*"
+    r"(.*?)"
+    r"(?=" + TIMESTAMP_PAIR_RE + r"|\Z)",
+    re.DOTALL,
 )
-QUOTED_RE = re.compile(r'"([^"]*)"')
-HEADING_RE = re.compile(r"^#{1,6}\s*(.+?)\s*$", re.MULTILINE)
+
+# Cue-setting tokens that can trail a VTT timestamp line (not actual cue text).
+CUE_SETTINGS_RE = re.compile(
+    r"^(?:(?:align|position|size|line|vertical|region):\S+\s*)+$", re.IGNORECASE
+)
 
 CANONICAL_SECTIONS = ("REMOVED", "EDITED_TRANSCRIPT", "CHANGE_LOG", "QUESTIONS")
 
@@ -56,11 +71,19 @@ def clean_text(text: str) -> str:
 
 
 def parse_vtt(text: str) -> list[Cue]:
-    """Parse raw WEBVTT cue blocks into a list of Cue objects.
+    """Parse VTT-style cue blocks into a list of Cue objects.
+
+    Handles two layouts, since different AIs (and real YouTube VTT files)
+    vary here:
+
+    1. Standard WebVTT — timestamp line alone, cue text on the following
+       line(s), cues separated by a blank line.
+    2. "Timestamp + text on one line" — some AI replies write
+       "HH:MM:SS.mmm --> HH:MM:SS.mmm some cue text" with no line break
+       and no blank-line separator between cues.
 
     Lines that aren't a "start --> end" timestamp line (headers, cue
-    numbers, NOTE blocks) are skipped rather than erroring, since
-    auto-generated captions and pasted excerpts vary in what they include.
+    numbers, NOTE blocks) are skipped rather than erroring.
     """
 
     lines = text.splitlines()
@@ -72,21 +95,32 @@ def parse_vtt(text: str) -> list[Cue]:
         line = lines[i].strip()
 
         if "-->" in line:
-            start_raw, _, end_raw = line.partition("-->")
+            start_raw, _, rest = line.partition("-->")
+            end_match = TIMESTAMP_RE.search(rest)
+
+            if not end_match:
+                i += 1
+                continue
+
             try:
                 start = parse_timestamp(start_raw)
-                end = parse_timestamp(end_raw)
             except ValueError:
                 i += 1
                 continue
 
+            end = parse_timestamp(end_match.group(0))
+            remainder = rest[end_match.end():].strip()
             i += 1
-            text_lines = []
-            while i < n and lines[i].strip() != "":
-                text_lines.append(lines[i])
-                i += 1
 
-            cue_text = clean_text(" ".join(text_lines))
+            if remainder and not CUE_SETTINGS_RE.match(remainder):
+                cue_text = clean_text(remainder)
+            else:
+                text_lines = []
+                while i < n and lines[i].strip() != "":
+                    text_lines.append(lines[i])
+                    i += 1
+                cue_text = clean_text(" ".join(text_lines))
+
             if cue_text:
                 cues.append(Cue(start=start, end=end, text=cue_text))
         else:
@@ -95,59 +129,58 @@ def parse_vtt(text: str) -> list[Cue]:
     return cues
 
 
-def _canonical_heading(raw_heading: str) -> str | None:
-    key = raw_heading.strip().upper().replace(" ", "_")
+def _match_heading(line: str) -> str | None:
+    """Recognize a line as one of our section headings, whether it's
+    markdown ("## REMOVED"), bold ("**REMOVED**"), or just a bare word on
+    its own line ("REMOVED") — different AIs format these differently.
+    """
+
+    candidate = line.strip().strip("#*_>- \t").rstrip(":").strip()
+
+    if not candidate or len(candidate) > 40:
+        return None
+
+    key = candidate.upper().replace(" ", "_")
+
     for name in CANONICAL_SECTIONS:
-        if key == name or key.startswith(name):
+        if key == name or key.startswith(name + "_"):
             return name
+
     return None
 
 
 def split_sections(text: str) -> dict[str, str]:
-    matches = list(HEADING_RE.finditer(text))
-    sections: dict[str, str] = {}
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
 
-    for idx, match in enumerate(matches):
-        canonical = _canonical_heading(match.group(1))
-        if not canonical:
+    for line in text.splitlines():
+        heading = _match_heading(line)
+        if heading:
+            current = heading
+            sections.setdefault(current, [])
             continue
-        start = match.end()
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
-        sections[canonical] = text[start:end].strip()
+        if current is not None:
+            sections[current].append(line)
 
-    return sections
+    return {name: "\n".join(body).strip() for name, body in sections.items()}
 
 
 def parse_removed_section(section_text: str) -> tuple[list[RemovedSegment], list[str]]:
     segments: list[RemovedSegment] = []
     warnings: list[str] = []
 
-    for raw_line in section_text.splitlines():
-        line = raw_line.strip()
-        line = re.sub(r"^[-*•]\s+", "", line)
-        line = re.sub(r"^\d+[.)]\s+", "", line)
-        if not line:
-            continue
+    for match in REMOVED_ENTRY_RE.finditer(section_text):
+        start_raw, end_raw, text, reason_raw = match.groups()
 
-        ts_match = REMOVED_LINE_TS_RE.search(line)
-        if not ts_match:
-            warnings.append(f"Could not find a timestamp range in REMOVED line: {raw_line!r}")
-            continue
-
-        start = parse_timestamp(ts_match.group(1))
-        end = parse_timestamp(ts_match.group(2))
+        start = parse_timestamp(start_raw)
+        end = parse_timestamp(end_raw)
 
         if end <= start:
-            warnings.append(f"Skipped invalid range (end <= start): {raw_line!r}")
+            warnings.append(f"Skipped invalid range (end <= start): {start_raw} --> {end_raw}")
             continue
 
-        remainder = line[ts_match.end():]
-        quoted = QUOTED_RE.search(remainder)
-        text = quoted.group(1) if quoted else ""
-        reason_part = remainder[quoted.end():] if quoted else remainder
-        reason = reason_part.strip(" |\t-")
-
-        segments.append(RemovedSegment(start=start, end=end, text=text, reason=reason))
+        reason = (reason_raw or "").strip(" |\t\r\n-")
+        segments.append(RemovedSegment(start=start, end=end, text=text or "", reason=reason))
 
     return segments, warnings
 
@@ -158,7 +191,7 @@ def parse_ai_response(text: str) -> ParsedResponse:
 
     if not sections:
         warnings.append(
-            "No '## REMOVED' / '## EDITED_TRANSCRIPT' headings found in the pasted text — "
+            "No REMOVED / EDITED_TRANSCRIPT section headings found in the pasted text — "
             "make sure you pasted the AI's full structured reply, not just the edited transcript."
         )
 

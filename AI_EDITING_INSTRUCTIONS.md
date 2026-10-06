@@ -77,6 +77,28 @@ instruction, then produce the output described below.
    remaining timestamps earlier to "close the gap." Keep every surviving
    timestamp exactly as it was in the input — gap-closing happens later in
    the deterministic rendering step, not by you.
+7. **If the instruction gives a target output length** (e.g. "make it about
+   15 minutes"), you MUST account for cue overlap before reporting or
+   relying on how much you've removed:
+   - Because input cues overlap, the sum of each removed cue's own
+     `(end - start)` **overcounts** how much unique video time you've
+     actually removed. Two overlapping cues covering 10.0–14.0 and
+     12.0–16.0 only remove 6 seconds of real video (10.0–16.0), not 4+4=8.
+   - Before finalizing, merge your REMOVED ranges by time exactly like the
+     renderer will: sort them by start time, then merge any two ranges
+     where the next one's start is `<=` the previous one's end. Sum the
+     *merged* ranges — that merged total is the real amount of video you
+     are removing. Report that number in `CHANGE_LOG`, not the naive
+     per-entry sum.
+   - To hit a specific target length reliably, prefer a **small number of
+     large contiguous REMOVE ranges** (e.g. "cut 00:17:35 → 00:23:00 as one
+     block") over many small overlapping-cue-level fragments. Large
+     contiguous ranges aren't affected by the overlap-undercounting
+     problem and make the math easy to verify by hand.
+   - If, after merging, your REMOVED ranges don't add up to roughly the
+     requested target length, go back and remove more — don't report a
+     merged total that falls short of the target without flagging it under
+     `QUESTIONS`.
 
 ### Expected output format
 
@@ -97,7 +119,8 @@ HH:MM:SS.mmm --> HH:MM:SS.mmm | "<original cue text>" | <short reason>
 ## CHANGE_LOG
 
 - Cues removed: <count>
-- Approx. time removed: <sum of removed cue durations, seconds>
+- Time removed (merged, non-overlapping — see rule 7 above): <seconds>
+- Resulting approx. output length: <original length minus the merged total>
 - Notes: <anything you merged/skipped/treated specially, or "none">
 
 ## QUESTIONS   (omit this section entirely if there are none)
@@ -151,7 +174,8 @@ speech."
 ## CHANGE_LOG
 
 - Cues removed: 1
-- Approx. time removed: 3.5s
+- Time removed (merged, non-overlapping): 3.5s
+- Resulting approx. output length: original minus 3.5s
 - Notes: left the first cue's "[музыка]" prefix alone because it also contains real speech
 ```
 

@@ -99,6 +99,22 @@ instruction, then produce the output described below.
      requested target length, go back and remove more — don't report a
      merged total that falls short of the target without flagging it under
      `QUESTIONS`.
+8. **Verify your own arithmetic before replying — do not assert a number
+   you haven't actually computed from your own output.** This has failed
+   before in a way unrelated to overlap: 5 non-overlapping REMOVED ranges
+   were given, but `CHANGE_LOG` claimed a "time removed" 40% higher than
+   what those 5 ranges actually summed to, as if a larger edit had been
+   planned mentally but never actually written into `REMOVED`.
+   - After you finalize your `REMOVED` list, literally list out each
+     entry's `(end - start)` and add them up (post-merge, per rule 7).
+     Whatever that sum is, is what goes in `CHANGE_LOG` — never a number
+     that "sounds about right" for the target length.
+   - Cross-check: `original length - merged removed total` must equal the
+     `Resulting approx. output length` you report. If your arithmetic
+     doesn't actually reach the requested target length, that means your
+     `REMOVED` list itself is incomplete — go back and add more ranges to
+     `REMOVED` itself (don't just edit the reported numbers to match the
+     target).
 
 ### Expected output format
 

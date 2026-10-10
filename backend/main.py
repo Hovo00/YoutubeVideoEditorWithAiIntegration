@@ -8,6 +8,7 @@ run.py). State is kept in memory since this is a single-user local tool.
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import uuid
 from pathlib import Path
@@ -18,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .ai import ClaudeNotConfiguredError, generate_edit
 from .editor import Cut, calculate_keep_segments, normalize_cuts
-from .parser import ParsedResponse, parse_ai_response
+from .parser import ParsedResponse, parse_ai_response, parse_outline
 from .render import FFmpegNotFoundError, get_duration, render_video
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -27,8 +28,17 @@ UPLOAD_DIR = MEDIA_DIR / "uploads"
 OUTPUT_DIR = MEDIA_DIR / "outputs"
 FRONTEND_DIR = BASE_DIR / "frontend"
 
+# Fixed, predictable location mirroring the current video+VTT — so Claude
+# Desktop/Claude Code can be pointed at the same path every time, regardless
+# of which internal project_id is active. Holds exactly one project at a
+# time (single-user tool); a new upload overwrites whatever was here.
+WORKSPACE_DIR = BASE_DIR / "workspace"
+OUTLINE_PATH = WORKSPACE_DIR / "outline.md"
+CUTS_PATH = WORKSPACE_DIR / "cuts.md"
+
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="VideoEditorY")
 
@@ -72,6 +82,18 @@ async def upload_video(
         vtt_text = vtt_bytes.decode("utf-8", errors="replace")
         (project_dir / "subtitles.vtt").write_text(vtt_text, encoding="utf-8")
 
+    # Mirror into the fixed workspace folder (see WORKSPACE_DIR) so Claude
+    # Desktop/Claude Code always has a stable path to work with. This is a
+    # new "current project" — drop any previous video file (could have a
+    # different extension) and any stale Step 1/Step 2 output.
+    for old_video in WORKSPACE_DIR.glob("video.*"):
+        old_video.unlink()
+    shutil.copyfile(video_path, WORKSPACE_DIR / f"video{suffix}")
+    if vtt_text is not None:
+        (WORKSPACE_DIR / "subtitles.vtt").write_text(vtt_text, encoding="utf-8")
+    OUTLINE_PATH.unlink(missing_ok=True)
+    CUTS_PATH.unlink(missing_ok=True)
+
     PROJECTS[project_id] = {
         "video_path": str(video_path),
         "duration": duration,
@@ -111,6 +133,41 @@ def _cuts_response(parsed: ParsedResponse, duration: float) -> dict:
 async def parse_ai_text(project_id: str = Form(...), ai_response: str = Form(...)):
     project = _get_project(project_id)
     parsed = parse_ai_response(ai_response)
+    return _cuts_response(parsed, project["duration"])
+
+
+@app.get("/api/workspace/outline")
+async def workspace_outline():
+    if not OUTLINE_PATH.exists():
+        raise HTTPException(404, "No outline.md yet — ask Claude to do Step 1 first.")
+
+    text = OUTLINE_PATH.read_text(encoding="utf-8")
+    sections = parse_outline(text)
+
+    if not sections and text.strip():
+        raise HTTPException(
+            422,
+            "outline.md exists but doesn't match the expected "
+            "'## Title (start - end)' heading format — see AI_EDITING_INSTRUCTIONS.md.",
+        )
+
+    return {
+        "sections": [
+            {"level": s.level, "title": s.title, "start": s.start, "end": s.end, "body": s.body}
+            for s in sections
+        ]
+    }
+
+
+@app.get("/api/workspace/cuts")
+async def workspace_cuts(project_id: str):
+    project = _get_project(project_id)
+
+    if not CUTS_PATH.exists():
+        raise HTTPException(404, "No cuts.md yet — ask Claude to do Step 2 first.")
+
+    text = CUTS_PATH.read_text(encoding="utf-8")
+    parsed = parse_ai_response(text)
     return _cuts_response(parsed, project["duration"])
 
 

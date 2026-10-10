@@ -31,6 +31,15 @@ CUE_SETTINGS_RE = re.compile(
 
 CANONICAL_SECTIONS = ("REMOVED", "EDITED_TRANSCRIPT", "CHANGE_LOG", "QUESTIONS")
 
+# Step 1 outline headings: "## Title (HH:MM:SS.mmm - HH:MM:SS.mmm)" (## or
+# ### for sub-paragraphs), hyphen or en dash between the two timestamps.
+OUTLINE_HEADING_RE = re.compile(
+    r"^(#{2,3})\s*(.+?)\s*\(\s*"
+    r"(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3})\s*[-–]\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3})"
+    r"\s*\)\s*$",
+    re.MULTILINE,
+)
+
 
 @dataclass
 class Cue:
@@ -54,6 +63,15 @@ class ParsedResponse:
     change_log: str = ""
     questions: str = ""
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class OutlineSection:
+    level: int
+    title: str
+    start: float
+    end: float
+    body: str
 
 
 def parse_timestamp(raw: str) -> float:
@@ -211,3 +229,32 @@ def parse_ai_response(text: str) -> ParsedResponse:
         questions=sections.get("QUESTIONS", ""),
         warnings=warnings,
     )
+
+
+def parse_outline(text: str) -> list[OutlineSection]:
+    """Parse a Step 1 outline.md (see AI_EDITING_INSTRUCTIONS.md): a
+    "## Title (start - end)" / "### Sub-title (start - end)" heading per
+    paragraph/sub-paragraph, each followed by a prose summary.
+    """
+
+    matches = list(OUTLINE_HEADING_RE.finditer(text))
+    sections: list[OutlineSection] = []
+
+    for idx, match in enumerate(matches):
+        hashes, title, start_raw, end_raw = match.groups()
+
+        try:
+            start = parse_timestamp(start_raw)
+            end = parse_timestamp(end_raw)
+        except ValueError:
+            continue
+
+        body_start = match.end()
+        body_end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        body = text[body_start:body_end].strip()
+
+        sections.append(
+            OutlineSection(level=len(hashes), title=title.strip(), start=start, end=end, body=body)
+        )
+
+    return sections

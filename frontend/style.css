@@ -164,3 +164,47 @@ td.time {
   border-radius: 6px;
   font-weight: bold;
 }
+
+.outline-section {
+  background: #161616;
+  border-left: 3px solid #2563eb;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-top: 10px;
+}
+
+.outline-section.outline-sub {
+  margin-left: 24px;
+  border-left-color: #7aa2f7;
+  background: #141414;
+}
+
+.outline-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.outline-time {
+  font-family: monospace;
+  font-size: 0.85em;
+  color: #7aa2f7;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.outline-time:hover {
+  text-decoration: underline;
+}
+
+.outline-title {
+  font-weight: bold;
+  color: #eee;
+}
+
+.outline-body {
+  margin: 8px 0 0;
+  color: #bbb;
+  line-height: 1.5;
+}

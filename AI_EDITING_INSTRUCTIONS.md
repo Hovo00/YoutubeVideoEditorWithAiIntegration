@@ -48,10 +48,79 @@ restraint matter more than cleverness here.
    talking", "remove this repeated explanation", "delete the stray
    `[музыка]`-only cues".
 
-### Your task
+### Two ways this gets used
+
+**If you have file read/write access to this project folder** (Claude
+Code, Claude Desktop with the folder attached, etc.) — I may give you
+short commands by name, "step 1" or "step 2", instead of re-explaining
+each time:
+- **"Step 1"** means: do exactly what "Step 1 — Generate a readable
+  outline" below describes.
+- **"Step 2"** (or just a plain editing instruction) means: apply the
+  instruction and produce `REMOVED`/`CHANGE_LOG` per "Expected output
+  format" below, writing it to a file as well as replying in chat.
+
+**If you don't have file access** (e.g. plain ChatGPT/Gemini web chat) —
+ignore the step names; just use the TRANSCRIPT + INSTRUCTION template at
+the bottom of this file and reply normally in chat.
+
+### Step 1 — Generate a readable outline
+
+When asked to do "step 1":
+
+1. Read `workspace/subtitles.vtt` in this project folder.
+2. Divide the **entire** transcript into paragraphs by meaning/topic, not
+   by fixed time intervals. A paragraph covers one coherent idea, topic,
+   or moment — however long or short that actually runs — not a round
+   number of seconds. Use one level of sub-paragraphs when a paragraph
+   contains a few distinct beats worth separating (e.g. within a "rise
+   through Europe" paragraph, one sub-paragraph per individual fight).
+3. Every cue in the transcript must fall inside exactly one paragraph or
+   sub-paragraph. Don't skip content, and don't let spans overlap.
+4. For each paragraph/sub-paragraph, write a heading with a short
+   descriptive title and its exact start/end timestamps, **copied
+   verbatim from the first and last cue in that span** (same
+   never-invent-a-timestamp rule as everywhere else here), followed by a
+   short prose summary (2-6 sentences) of what is actually said in that
+   span, in your own words. This is a human-reading summary, not a
+   cue-by-cue transcription.
+5. Write the result to `workspace/outline.md`, in **exactly** this
+   format — the app parses it automatically to build a navigable view
+   with click-to-seek timestamps, so the heading pattern must match
+   exactly:
+
+   ```markdown
+   # Transcript Outline
+
+   ## <Title> (HH:MM:SS.mmm - HH:MM:SS.mmm)
+
+   <prose summary>
+
+   ### <Sub-title> (HH:MM:SS.mmm - HH:MM:SS.mmm)
+
+   <prose summary>
+
+   ## <Next title> (HH:MM:SS.mmm - HH:MM:SS.mmm)
+
+   <prose summary>
+   ```
+
+   `##` for top-level paragraphs, `###` for sub-paragraphs, each followed
+   by `(start - end)` with a hyphen or en dash.
+
+6. Also show the outline in your reply, so I can see it without opening
+   the file.
+
+**Step 1 never changes the transcript, and never proposes cuts.** It only
+reads and describes — if I haven't given an editing instruction, don't
+imply or suggest removals in the outline.
+
+### Your task (Step 2 — editing)
 
 Decide which **whole cue blocks** should be removed to satisfy the
-instruction, then produce the output described below.
+instruction, then produce the output described below. **If I haven't
+asked for a change, don't make one** — no instruction means no cuts, and
+nothing in the transcript gets touched or reworded regardless.
 
 ### Hard rules — do not break these
 
@@ -150,6 +219,12 @@ pure output cost with no benefit on a long transcript (it's usually the
 single biggest expense in each reply). Only add an `## EDITED_TRANSCRIPT`
 section, in the same format as before, if I explicitly ask to see the
 surviving text (e.g. "show me the edited transcript").
+
+**If you have file write access to this project folder, also write this
+exact `REMOVED`/`CHANGE_LOG` block (the whole thing, same two headers) to
+`workspace/cuts.md`, overwriting whatever was there before** — the
+cumulative-list requirement in rule 9 still applies to the file's
+contents, not just your chat reply. Still show it in your reply too.
 
 ### Worked example
 

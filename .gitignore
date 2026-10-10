@@ -7,3 +7,7 @@ media/uploads/*
 media/outputs/*
 !media/uploads/.gitkeep
 !media/outputs/.gitkeep
+
+# Mirrored copy of the current video/VTT + Step 1/2 output for Claude
+# Desktop/Code to work on directly — regenerated on every upload.
+workspace/

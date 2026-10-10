@@ -59,7 +59,63 @@ document.getElementById("loadBtn").addEventListener("click", async () => {
 
   info.textContent = `Loaded "${data.filename}" — duration ${formatTime(data.duration)}`;
 
+  showStep("stepOutline");
   showStep("step2");
+});
+
+// --- Step 2 (outline): load workspace/outline.md ---------------------------
+
+document.getElementById("loadOutlineBtn").addEventListener("click", async () => {
+  const statusEl = document.getElementById("outlineStatus");
+  const viewEl = document.getElementById("outlineView");
+  statusEl.textContent = "Loading...";
+  viewEl.innerHTML = "";
+
+  const response = await fetch("/api/workspace/outline");
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    statusEl.textContent = err.detail || response.statusText;
+    return;
+  }
+
+  const data = await response.json();
+  statusEl.textContent = data.sections.length
+    ? `${data.sections.length} section(s).`
+    : "outline.md is empty so far.";
+
+  const preview = document.getElementById("preview");
+
+  for (const section of data.sections) {
+    const card = document.createElement("div");
+    card.className = "outline-section" + (section.level === 3 ? " outline-sub" : "");
+
+    const head = document.createElement("div");
+    head.className = "outline-head";
+
+    const seekLink = document.createElement("a");
+    seekLink.href = "#";
+    seekLink.className = "outline-time";
+    seekLink.textContent = `${formatTime(section.start)} - ${formatTime(section.end)}`;
+    seekLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      preview.currentTime = section.start;
+      preview.play();
+    });
+
+    const title = document.createElement("span");
+    title.className = "outline-title";
+    title.textContent = section.title;
+
+    head.append(seekLink, title);
+
+    const body = document.createElement("p");
+    body.className = "outline-body";
+    body.textContent = section.body;
+
+    card.append(head, body);
+    viewEl.appendChild(card);
+  }
 });
 
 // --- Step 2: generate or parse cuts --------------------------------------
@@ -141,6 +197,23 @@ document.getElementById("generateBtn").addEventListener("click", () => {
   const button = document.getElementById("generateBtn");
   const statusEl = document.getElementById("aiEditStatus");
   requestAiEdit(instruction, button, statusEl);
+});
+
+document.getElementById("loadCutsFileBtn").addEventListener("click", async () => {
+  if (!state.projectId) {
+    alert("Load a video first.");
+    return;
+  }
+
+  const response = await fetch(`/api/workspace/cuts?project_id=${encodeURIComponent(state.projectId)}`);
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    alert(`Could not load workspace/cuts.md: ${err.detail || response.statusText}`);
+    return;
+  }
+
+  applyCutsResponse(await response.json());
 });
 
 document.getElementById("refineBtn").addEventListener("click", () => {

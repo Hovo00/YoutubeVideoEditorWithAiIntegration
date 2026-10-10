@@ -27,8 +27,24 @@
       <div id="videoInfo" class="muted"></div>
     </section>
 
+    <section class="step" id="stepOutline" style="display:none">
+      <h2>2. Generate a readable outline <span class="muted">(optional)</span></h2>
+      <p class="muted">
+        In Claude Desktop (or a <code>claude</code> terminal), attach/<code>cd</code> into
+        this project folder and say <strong>"do step 1"</strong> — it already knows what
+        that means from <code>AI_EDITING_INSTRUCTIONS.md</code>. It'll read
+        <code>workspace/subtitles.vtt</code> and write <code>workspace/outline.md</code>:
+        the transcript broken into topic-based paragraphs instead of raw cues.
+      </p>
+      <div class="row">
+        <button id="loadOutlineBtn">Load outline</button>
+      </div>
+      <div id="outlineStatus" class="muted"></div>
+      <div id="outlineView"></div>
+    </section>
+
     <section class="step" id="step2" style="display:none">
-      <h2>2. Describe the edit</h2>
+      <h2>3. Describe the edit</h2>
 
       <div id="aiEditBox">
         <p class="muted">Tell Claude what to change. It has the full <code>AI_EDITING_INSTRUCTIONS.md</code> rules as its system prompt.</p>
@@ -38,6 +54,15 @@
         </div>
         <div id="aiEditStatus" class="muted"></div>
       </div>
+
+      <div class="row">
+        <button id="loadCutsFileBtn">Load cuts from workspace/cuts.md</button>
+      </div>
+      <p class="muted">
+        If you gave Claude an editing instruction in Claude Desktop/terminal (Step 2 in
+        <code>AI_EDITING_INSTRUCTIONS.md</code>), it should have written
+        <code>workspace/cuts.md</code> directly — click above to load it, no copy-paste needed.
+      </p>
 
       <details class="manual-fallback">
         <summary>Or paste a reply from another AI manually</summary>
@@ -62,7 +87,7 @@
     </section>
 
     <section class="step" id="step3" style="display:none">
-      <h2>3. Review &amp; render</h2>
+      <h2>4. Review &amp; render</h2>
       <div id="summary" class="summary"></div>
 
       <table id="cutsTable">

@@ -40,6 +40,11 @@ document.getElementById("loadBtn").addEventListener("click", async () => {
   const formData = new FormData();
   formData.append("video", file);
 
+  const vttFile = document.getElementById("vttInput").files[0];
+  if (vttFile) {
+    formData.append("subtitles", vttFile);
+  }
+
   const response = await fetch("/api/upload", { method: "POST", body: formData });
 
   if (!response.ok) {
@@ -57,7 +62,16 @@ document.getElementById("loadBtn").addEventListener("click", async () => {
   showStep("step2");
 });
 
-// --- Step 2: parse AI response ------------------------------------------
+// --- Step 2: generate or parse cuts --------------------------------------
+
+function applyCutsResponse(data) {
+  state.cuts = data.cuts.map((c) => ({ ...c, enabled: true }));
+  renderWarnings(data.warnings);
+  renderSummary(data);
+  renderCutsTable();
+  document.getElementById("refineBox").style.display = "flex";
+  showStep("step3");
+}
 
 document.getElementById("parseBtn").addEventListener("click", async () => {
   if (!state.projectId) {
@@ -83,15 +97,58 @@ document.getElementById("parseBtn").addEventListener("click", async () => {
     return;
   }
 
-  const data = await response.json();
+  applyCutsResponse(await response.json());
+});
 
-  state.cuts = data.cuts.map((c) => ({ ...c, enabled: true }));
+async function requestAiEdit(instruction, button, statusEl) {
+  if (!state.projectId) {
+    alert("Load a video first.");
+    return;
+  }
+  if (!instruction.trim()) {
+    alert("Type an instruction first.");
+    return;
+  }
 
-  renderWarnings(data.warnings);
-  renderSummary(data);
-  renderCutsTable();
+  button.disabled = true;
+  if (statusEl) statusEl.textContent = "Asking Claude... this can take a little while for long transcripts.";
 
-  showStep("step3");
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+  formData.append("instruction", instruction);
+
+  try {
+    const response = await fetch("/api/ai-edit", { method: "POST", body: formData });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      const message = `Claude edit failed: ${err.detail || response.statusText}`;
+      if (statusEl) statusEl.textContent = message;
+      else alert(message);
+      return;
+    }
+
+    const data = await response.json();
+    if (statusEl) statusEl.textContent = "";
+    applyCutsResponse(data);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.getElementById("generateBtn").addEventListener("click", () => {
+  const instruction = document.getElementById("instructionInput").value;
+  const button = document.getElementById("generateBtn");
+  const statusEl = document.getElementById("aiEditStatus");
+  requestAiEdit(instruction, button, statusEl);
+});
+
+document.getElementById("refineBtn").addEventListener("click", () => {
+  const input = document.getElementById("refineInput");
+  const button = document.getElementById("refineBtn");
+  requestAiEdit(input.value, button, null).then(() => {
+    input.value = "";
+  });
 });
 
 function renderWarnings(warnings) {

@@ -39,10 +39,9 @@ restraint matter more than cleverness here.
      (music), or fragments of other languages picked up by auto-translate.
      Do not "correct" these unless the instruction explicitly asks you to.
    - The transcript you receive might be an **original**, or it might be an
-     **already-edited transcript from a previous round** (i.e. the
-     `EDITED_TRANSCRIPT` output you produced earlier, see "Iteration" below).
-     Treat both cases identically — just apply the new instruction on top of
-     whatever transcript you are given.
+     **already-edited transcript from a previous round** (see "Iteration"
+     below). Treat both cases identically — just apply the new instruction
+     on top of whatever transcript you are given.
 
 2. **INSTRUCTION** — a plain-language description of what to change, e.g.
    "remove the sponsor section", "cut the intro before the subject starts
@@ -115,6 +114,12 @@ instruction, then produce the output described below.
      `REMOVED` list itself is incomplete — go back and add more ranges to
      `REMOVED` itself (don't just edit the reported numbers to match the
      target).
+9. **If this is a follow-up request in the same conversation, output the
+   FULL cumulative `REMOVED` list — everything removed in earlier rounds
+   plus whatever this new instruction adds.** Only your latest reply is
+   read; a `REMOVED` list missing earlier entries silently un-does those
+   cuts. You already have your own prior `REMOVED` entries in context —
+   don't re-derive them, just carry them forward and append/adjust.
 
 ### Expected output format
 
@@ -124,13 +129,8 @@ headers (so the output stays easy to parse later):
 ```
 ## REMOVED
 
-<for each removed cue, one line:>
+<for each removed cue, one line — this round's full cumulative list, see rule 9:>
 HH:MM:SS.mmm --> HH:MM:SS.mmm | "<original cue text>" | <short reason>
-
-## EDITED_TRANSCRIPT
-
-<all surviving cues, in the same VTT cue format as the input:
- timestamp line, then text, blank line between cues. Nothing else.>
 
 ## CHANGE_LOG
 
@@ -143,6 +143,13 @@ HH:MM:SS.mmm --> HH:MM:SS.mmm | "<original cue text>" | <short reason>
 
 - <anything ambiguous you deliberately did not act on, and why>
 ```
+
+**Do not include an `EDITED_TRANSCRIPT` section by default.** The video is
+cut using only `REMOVED` — a full re-listing of every surviving cue is
+pure output cost with no benefit on a long transcript (it's usually the
+single biggest expense in each reply). Only add an `## EDITED_TRANSCRIPT`
+section, in the same format as before, if I explicitly ask to see the
+surviving text (e.g. "show me the edited transcript").
 
 ### Worked example
 
@@ -173,20 +180,6 @@ speech."
 
 00:03:35.497 --> 00:03:39.040 | "[музыка]" | Cue contains only a music tag, no speech
 
-## EDITED_TRANSCRIPT
-
-00:03:30.257 --> 00:03:34.159
-[музыка] В скором времени молодому
-
-00:03:32.200 --> 00:03:35.497
-дарованию было отправлено предложение,
-
-00:03:34.159 --> 00:03:36.400
-от которого нельзя было отказываться.
-
-00:03:36.400 --> 00:03:41.319
-На турнире K1 в Швеции в главном событии
-
 ## CHANGE_LOG
 
 - Cues removed: 1
@@ -195,17 +188,22 @@ speech."
 - Notes: left the first cue's "[музыка]" prefix alone because it also contains real speech
 ```
 
-Notice the three surviving cues are untouched — same timestamps, same text,
-same order — and the removed cue's timestamp is copied exactly, not rounded.
+No `EDITED_TRANSCRIPT` section — it wasn't asked for. The removed cue's
+timestamp is copied exactly from the input, not rounded.
 
 ### Iteration — asking for more changes afterward
 
-If I come back with another instruction, I will paste the
-`EDITED_TRANSCRIPT` from your previous reply as the new TRANSCRIPT input.
-Treat it exactly like a fresh transcript and apply the same rules. Because
-you never alter surviving timestamps, this stays consistent across as many
-rounds as needed, and I can always diff your output against the original
-file to double check nothing unexpected changed.
+**Same conversation (normal case):** just give the next instruction — don't
+re-paste anything. You already have the full transcript and your own prior
+`REMOVED` list in context. Apply rule 9: output the full cumulative
+`REMOVED` list (old entries + whatever this instruction adds), not just the
+delta.
+
+**Fresh conversation with no memory** (e.g. a new chat session): paste the
+original TRANSCRIPT again, plus the `REMOVED` list from the last reply you
+got, so the new session has the prior cuts as context. Treat that combination
+the same as a first request — apply rule 9 the same way, folding the pasted
+prior cuts into your new cumulative list.
 
 ---
 

@@ -16,32 +16,48 @@
     </header>
 
     <section class="step" id="step1">
-      <h2>1. Load video</h2>
+      <h2>1. Load video + subtitles</h2>
       <div class="row">
         <input type="file" id="videoInput" accept="video/*" />
-        <button id="loadBtn">Load video</button>
+        <input type="file" id="vttInput" accept=".vtt" />
+        <button id="loadBtn">Load</button>
       </div>
+      <p class="muted">The .vtt is optional — only needed for the "Generate edit with Claude" flow below. Skip it if you'll paste an AI reply manually instead.</p>
       <video id="preview" class="video" controls></video>
       <div id="videoInfo" class="muted"></div>
     </section>
 
     <section class="step" id="step2" style="display:none">
-      <h2>2. Paste the AI's reply</h2>
-      <p class="muted">
-        Paste the full structured reply you got back from ChatGPT (or another AI)
-        after giving it <code>AI_EDITING_INSTRUCTIONS.md</code> plus your instruction
-        and transcript — including its <code>## REMOVED</code> section.
-      </p>
-      <textarea id="aiResponse" rows="14" placeholder="## REMOVED
+      <h2>2. Describe the edit</h2>
+
+      <div id="aiEditBox">
+        <p class="muted">Tell Claude what to change. It has the full <code>AI_EDITING_INSTRUCTIONS.md</code> rules as its system prompt.</p>
+        <div class="row">
+          <input type="text" id="instructionInput" placeholder="e.g. make this about 15 minutes, keep the main chronology" />
+          <button id="generateBtn">Generate edit with Claude</button>
+        </div>
+        <div id="aiEditStatus" class="muted"></div>
+      </div>
+
+      <details class="manual-fallback">
+        <summary>Or paste a reply from another AI manually</summary>
+        <p class="muted">
+          Paste the full structured reply you got back from ChatGPT (or another AI)
+          after giving it <code>AI_EDITING_INSTRUCTIONS.md</code> plus your instruction
+          and transcript — including its <code>## REMOVED</code> section.
+        </p>
+        <textarea id="aiResponse" rows="14" placeholder="## REMOVED
 
 00:03:35.497 --> 00:03:39.040 | &quot;[музыка]&quot; | Music-only cue
 
 ## EDITED_TRANSCRIPT
 ...
 "></textarea>
-      <div class="row">
-        <button id="parseBtn">Parse cuts</button>
-      </div>
+        <div class="row">
+          <button id="parseBtn">Parse cuts</button>
+        </div>
+      </details>
+
       <div id="warnings" class="warnings"></div>
     </section>
 
@@ -61,6 +77,11 @@
         </thead>
         <tbody></tbody>
       </table>
+
+      <div id="refineBox" class="row" style="display:none">
+        <input type="text" id="refineInput" placeholder="ask for more changes, e.g. also trim the Askerov fight" />
+        <button id="refineBtn">Refine with Claude</button>
+      </div>
 
       <div class="row">
         <button id="renderBtn">Render edited video</button>

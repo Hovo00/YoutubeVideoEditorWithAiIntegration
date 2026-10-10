@@ -16,8 +16,9 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .ai import ClaudeNotConfiguredError, generate_edit
 from .editor import Cut, calculate_keep_segments, normalize_cuts
-from .parser import parse_ai_response
+from .parser import ParsedResponse, parse_ai_response
 from .render import FFmpegNotFoundError, get_duration, render_video
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -31,7 +32,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="VideoEditorY")
 
-# project_id -> {video_path, duration, status, output_path, error}
+# project_id -> {video_path, duration, status, output_path, error, vtt_text, conversation}
 PROJECTS: dict[str, dict] = {}
 
 
@@ -43,7 +44,10 @@ def _get_project(project_id: str) -> dict:
 
 
 @app.post("/api/upload")
-async def upload_video(video: UploadFile = File(...)):
+async def upload_video(
+    video: UploadFile = File(...),
+    subtitles: UploadFile | None = File(None),
+):
     project_id = str(uuid.uuid4())
     project_dir = UPLOAD_DIR / project_id
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -62,28 +66,31 @@ async def upload_video(video: UploadFile = File(...)):
     except Exception as exc:
         raise HTTPException(400, f"Could not read video file: {exc}")
 
+    vtt_text = None
+    if subtitles is not None:
+        vtt_bytes = await subtitles.read()
+        vtt_text = vtt_bytes.decode("utf-8", errors="replace")
+        (project_dir / "subtitles.vtt").write_text(vtt_text, encoding="utf-8")
+
     PROJECTS[project_id] = {
         "video_path": str(video_path),
         "duration": duration,
         "status": "idle",
         "output_path": None,
         "error": None,
+        "vtt_text": vtt_text,
+        "conversation": [],
     }
 
     return {"project_id": project_id, "duration": duration, "filename": video.filename}
 
 
-@app.post("/api/parse")
-async def parse_ai_text(project_id: str = Form(...), ai_response: str = Form(...)):
-    project = _get_project(project_id)
-
-    parsed = parse_ai_response(ai_response)
-
+def _cuts_response(parsed: ParsedResponse, duration: float) -> dict:
     cuts = [
         Cut(start=r.start, end=r.end, text=r.text, reason=r.reason)
         for r in parsed.removed
     ]
-    normalized = normalize_cuts(cuts, project["duration"])
+    normalized = normalize_cuts(cuts, duration)
     removed_seconds = sum(c.end - c.start for c in normalized)
 
     return {
@@ -92,12 +99,47 @@ async def parse_ai_text(project_id: str = Form(...), ai_response: str = Form(...
             for c in normalized
         ],
         "removed_seconds": removed_seconds,
-        "original_duration": project["duration"],
-        "new_duration": max(0.0, project["duration"] - removed_seconds),
+        "original_duration": duration,
+        "new_duration": max(0.0, duration - removed_seconds),
         "warnings": parsed.warnings,
         "change_log": parsed.change_log,
         "questions": parsed.questions,
     }
+
+
+@app.post("/api/parse")
+async def parse_ai_text(project_id: str = Form(...), ai_response: str = Form(...)):
+    project = _get_project(project_id)
+    parsed = parse_ai_response(ai_response)
+    return _cuts_response(parsed, project["duration"])
+
+
+@app.post("/api/ai-edit")
+async def ai_edit(project_id: str = Form(...), instruction: str = Form(...)):
+    project = _get_project(project_id)
+
+    if not project.get("vtt_text"):
+        raise HTTPException(
+            400,
+            "No subtitles uploaded for this project — upload a .vtt file "
+            "alongside the video to use the Claude-driven edit flow.",
+        )
+
+    try:
+        reply_text, updated_messages = generate_edit(
+            project["conversation"], instruction, project["vtt_text"]
+        )
+    except ClaudeNotConfiguredError as exc:
+        raise HTTPException(500, str(exc))
+    except Exception as exc:
+        raise HTTPException(502, f"Claude request failed: {exc}")
+
+    project["conversation"] = updated_messages
+
+    parsed = parse_ai_response(reply_text)
+    response = _cuts_response(parsed, project["duration"])
+    response["raw_reply"] = reply_text
+    return response
 
 
 def _run_render(project_id: str, keep_segments: list[tuple[float, float]], output_path: Path) -> None:

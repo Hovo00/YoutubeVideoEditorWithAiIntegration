@@ -213,3 +213,45 @@ td.time {
   color: #bbb;
   line-height: 1.5;
 }
+
+.chunk-card {
+  background: #161616;
+  border-left: 3px solid #22c55e;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-top: 10px;
+}
+
+.chunk-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.chunk-index {
+  font-weight: bold;
+  color: #eee;
+}
+
+.chunk-time,
+.chunk-slot {
+  font-family: monospace;
+  font-size: 0.85em;
+  color: #7aa2f7;
+  white-space: nowrap;
+}
+
+.chunk-text {
+  margin: 8px 0 0;
+  color: #bbb;
+  line-height: 1.5;
+}
+
+.chunk-audio-status {
+  margin-top: 6px;
+}
+
+.chunk-audio-status.warning {
+  color: #e55;
+}

@@ -131,10 +131,50 @@
       <div class="row">
         <button id="renderBtn">Render edited video</button>
       </div>
+      <p class="muted">Plain render — keeps the original audio untouched, no voice-over, no music.</p>
+
+      <details class="manual-fallback">
+        <summary>Or render with a custom audio mix (voice-over / background music)</summary>
+        <p class="muted">
+          Uses whatever voice-over audio you generated in "5. Voice-over text chunks" below,
+          placed at the correct spot in the edited video automatically.
+        </p>
+        <div class="row">
+          <label><input type="checkbox" id="cutOriginalAudioCheck" /> Cut the original audio track</label>
+        </div>
+        <div class="row">
+          <label><input type="checkbox" id="addMusicCheck" /> Add background music</label>
+          <input type="file" id="musicInput" accept="audio/*" />
+          <label>Volume: <input type="number" id="musicDbInput" value="-5" step="1" style="width:4em" /> dB</label>
+        </div>
+        <div class="row">
+          <button id="renderWithAudioBtn">Render with custom audio</button>
+        </div>
+      </details>
 
       <div id="renderStatus" class="muted"></div>
       <a id="downloadLink" class="download" style="display:none" target="_blank">Download edited video</a>
       <video id="resultPreview" class="video" controls style="display:none"></video>
+    </section>
+
+    <section class="step" id="step4" style="display:none">
+      <h2>5. Voice-over text chunks</h2>
+      <p class="muted">
+        Text from everything your <em>currently enabled</em> cuts above would keep. If you ran
+        Step 1 with Claude, this is one chunk per outline paragraph/sub-paragraph — whatever
+        granularity the outline itself chose — with no overlaps, so nothing is covered twice or
+        skipped. Without an outline, falls back to ~500-character chunks cut at cue boundaries.
+        Use this if you're replacing the audio with text-to-speech: either click
+        "Generate with Piper" on a chunk for a free, local, offline voice-over (no API key,
+        runs on this machine), or copy the text into any other TTS tool and upload the result.
+        Each chunk shows how many seconds of video it has to fill, and the check tells you if
+        the audio is too long for that slot.
+      </p>
+      <div class="row">
+        <button id="generateChunksBtn">Generate voice-over text chunks</button>
+      </div>
+      <div id="chunksStatus" class="muted"></div>
+      <div id="chunksView"></div>
     </section>
 
   </div>

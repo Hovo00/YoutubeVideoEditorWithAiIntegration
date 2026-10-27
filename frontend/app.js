@@ -4,6 +4,8 @@ const state = {
   cuts: [], // {start, end, text, reason, enabled}
   pollTimer: null,
   outlineSections: [], // {level, title, start, end, body}
+  chunks: [], // {text, start, end, slot_duration}
+  ttsVoices: [], // {name, label}
 };
 
 function formatTime(seconds) {
@@ -236,6 +238,7 @@ function applyCutsResponse(data) {
   renderCutsTable();
   document.getElementById("refineBox").style.display = "flex";
   showStep("step3");
+  showStep("step4");
 }
 
 document.getElementById("parseBtn").addEventListener("click", async () => {
@@ -400,6 +403,201 @@ function renderCutsTable() {
   });
 }
 
+// --- Voice-over text chunks -------------------------------------------
+
+document.getElementById("generateChunksBtn").addEventListener("click", async () => {
+  if (!state.projectId) {
+    alert("Load a video first.");
+    return;
+  }
+
+  const statusEl = document.getElementById("chunksStatus");
+  statusEl.textContent = "Building chunks...";
+
+  const enabledCuts = state.cuts.filter((c) => c.enabled);
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+  formData.append(
+    "cuts_json",
+    JSON.stringify(enabledCuts.map((c) => ({ start: c.start, end: c.end })))
+  );
+
+  const response = await fetch("/api/transcript-chunks", { method: "POST", body: formData });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    statusEl.textContent = err.detail || response.statusText;
+    return;
+  }
+
+  const data = await response.json();
+  state.chunks = data.chunks;
+  const modeNote =
+    data.chunking_mode === "outline"
+      ? "One chunk per outline paragraph/sub-paragraph."
+      : "No outline found — using ~500-character chunks instead. Run Step 1 with Claude first for paragraph-based chunks.";
+  statusEl.textContent =
+    `${data.chunks.length} chunk(s) — ${data.kept_cue_count} of ${data.total_cue_count} cues kept. ${modeNote} ` +
+    "Toggling cuts above? Click this button again to refresh the chunks.";
+
+  if (state.ttsVoices.length === 0) {
+    const voicesResponse = await fetch("/api/tts/voices");
+    if (voicesResponse.ok) {
+      state.ttsVoices = (await voicesResponse.json()).voices;
+    }
+  }
+
+  renderChunks();
+});
+
+function showAudioFitResult(statusEl, result) {
+  if (result.fits) {
+    statusEl.textContent =
+      `Fits — audio is ${result.audio_duration.toFixed(1)}s, slot is ${result.slot_duration.toFixed(1)}s.`;
+    statusEl.classList.remove("warning");
+  } else {
+    statusEl.textContent =
+      `Too long — audio is ${result.audio_duration.toFixed(1)}s but the slot is only ` +
+      `${result.slot_duration.toFixed(1)}s (${result.overflow_seconds.toFixed(1)}s over). ` +
+      "Regenerate it shorter or it will be cut off.";
+    statusEl.classList.add("warning");
+  }
+}
+
+function renderChunks() {
+  const viewEl = document.getElementById("chunksView");
+  viewEl.innerHTML = "";
+
+  state.chunks.forEach((chunk, index) => {
+    const card = document.createElement("div");
+    card.className = "chunk-card";
+
+    const head = document.createElement("div");
+    head.className = "chunk-head";
+
+    const indexEl = document.createElement("span");
+    indexEl.className = "chunk-index";
+    indexEl.textContent = chunk.title || `Chunk ${index + 1}`;
+
+    const timeEl = document.createElement("span");
+    timeEl.className = "chunk-time";
+    timeEl.textContent = `${formatTime(chunk.start)} - ${formatTime(chunk.end)}`;
+
+    const slotEl = document.createElement("span");
+    slotEl.className = "chunk-slot";
+    slotEl.textContent = `slot: ${chunk.slot_duration.toFixed(1)}s`;
+
+    head.append(indexEl, timeEl, slotEl);
+
+    const textEl = document.createElement("p");
+    textEl.className = "chunk-text";
+    textEl.textContent = chunk.text;
+
+    const row = document.createElement("div");
+    row.className = "row";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.textContent = "Copy text";
+    copyBtn.addEventListener("click", () => copyToClipboard(chunk.text, copyBtn));
+
+    const audioInput = document.createElement("input");
+    audioInput.type = "file";
+    audioInput.accept = "audio/*";
+
+    const uploadBtn = document.createElement("button");
+    uploadBtn.textContent = "Upload voice-over";
+
+    const audioStatus = document.createElement("div");
+    audioStatus.className = "muted chunk-audio-status";
+
+    uploadBtn.addEventListener("click", async () => {
+      const file = audioInput.files[0];
+      if (!file) {
+        alert("Choose an audio file first.");
+        return;
+      }
+
+      audioStatus.textContent = "Uploading...";
+      audioStatus.classList.remove("warning");
+
+      const formData = new FormData();
+      formData.append("project_id", state.projectId);
+      formData.append("chunk_index", String(index));
+      formData.append("slot_duration", String(chunk.slot_duration));
+      formData.append("audio", file);
+
+      const response = await fetch("/api/transcript-chunks/audio", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        audioStatus.textContent = `Upload failed: ${err.detail || response.statusText}`;
+        audioStatus.classList.add("warning");
+        return;
+      }
+
+      showAudioFitResult(audioStatus, await response.json());
+    });
+
+    row.append(copyBtn, audioInput, uploadBtn);
+    card.append(head, textEl, row, audioStatus);
+
+    if (state.ttsVoices.length > 0) {
+      const ttsRow = document.createElement("div");
+      ttsRow.className = "row";
+
+      const voiceSelect = document.createElement("select");
+      for (const voice of state.ttsVoices) {
+        const option = document.createElement("option");
+        option.value = voice.name;
+        option.textContent = voice.label;
+        voiceSelect.appendChild(option);
+      }
+
+      const generateBtn = document.createElement("button");
+      generateBtn.textContent = "Generate with Piper (free, local)";
+
+      generateBtn.addEventListener("click", async () => {
+        generateBtn.disabled = true;
+        audioStatus.textContent = "Generating speech locally...";
+        audioStatus.classList.remove("warning");
+
+        const formData = new FormData();
+        formData.append("project_id", state.projectId);
+        formData.append("chunk_index", String(index));
+        formData.append("text", chunk.text);
+        formData.append("slot_duration", String(chunk.slot_duration));
+        formData.append("voice", voiceSelect.value);
+
+        try {
+          const response = await fetch("/api/transcript-chunks/tts", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            audioStatus.textContent = `Generation failed: ${err.detail || response.statusText}`;
+            audioStatus.classList.add("warning");
+            return;
+          }
+
+          showAudioFitResult(audioStatus, await response.json());
+        } finally {
+          generateBtn.disabled = false;
+        }
+      });
+
+      ttsRow.append(voiceSelect, generateBtn);
+      card.append(ttsRow);
+    }
+
+    viewEl.appendChild(card);
+  });
+}
+
 // --- Step 3: render -------------------------------------------------------
 
 document.getElementById("renderBtn").addEventListener("click", async () => {
@@ -421,6 +619,49 @@ document.getElementById("renderBtn").addEventListener("click", async () => {
   statusEl.textContent = "Starting render...";
 
   const response = await fetch("/api/render", { method: "POST", body: formData });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    statusEl.textContent = `Render failed to start: ${err.detail || response.statusText}`;
+    return;
+  }
+
+  pollStatus();
+});
+
+document.getElementById("renderWithAudioBtn").addEventListener("click", async () => {
+  const enabledCuts = state.cuts.filter((c) => c.enabled);
+
+  if (enabledCuts.length === 0) {
+    alert("No cuts are enabled — nothing to remove. Enable at least one cut, or there's nothing to render.");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+  formData.append(
+    "cuts_json",
+    JSON.stringify(enabledCuts.map((c) => ({ start: c.start, end: c.end })))
+  );
+  formData.append(
+    "keep_original_audio",
+    document.getElementById("cutOriginalAudioCheck").checked ? "false" : "true"
+  );
+  formData.append("music_db", document.getElementById("musicDbInput").value || "-5");
+
+  if (document.getElementById("addMusicCheck").checked) {
+    const musicFile = document.getElementById("musicInput").files[0];
+    if (!musicFile) {
+      alert("Check \"Add background music\" and choose a music file, or uncheck it.");
+      return;
+    }
+    formData.append("music", musicFile);
+  }
+
+  const statusEl = document.getElementById("renderStatus");
+  statusEl.textContent = "Starting render...";
+
+  const response = await fetch("/api/render-with-audio", { method: "POST", body: formData });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));

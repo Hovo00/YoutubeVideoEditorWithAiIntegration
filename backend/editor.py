@@ -64,3 +64,20 @@ def calculate_keep_segments(cuts: list[Cut], duration: float) -> list[tuple[floa
         keep.append((position, duration))
 
     return keep
+
+
+def map_to_output_timeline(time: float, keep_segments: list[tuple[float, float]]) -> float:
+    """Maps a point in the ORIGINAL (pre-cut) timeline to where it lands in
+    the final rendered video, where kept segments are concatenated
+    back-to-back with cut gaps closed. `time` is expected to fall inside one
+    of `keep_segments` (true for any kept cue, by construction)."""
+
+    offset = 0.0
+    for start, end in keep_segments:
+        if start <= time <= end:
+            return offset + (time - start)
+        offset += end - start
+
+    # Falls outside every kept segment (shouldn't happen for a genuinely
+    # kept cue) — clamp to the end of the output instead of guessing.
+    return offset

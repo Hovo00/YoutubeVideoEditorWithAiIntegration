@@ -235,6 +235,12 @@ def parse_outline(text: str) -> list[OutlineSection]:
     """Parse a Step 1 outline.md (see AI_EDITING_INSTRUCTIONS.md): a
     "## Title (start - end)" / "### Sub-title (start - end)" heading per
     paragraph/sub-paragraph, each followed by a prose summary.
+
+    Always returns non-overlapping sections — see _resolve_overlaps. The AI
+    is instructed not to overlap paragraphs, but doesn't always comply (auto
+    caption cues overlap their own neighbors, which seems to confuse this),
+    so every caller gets corrected boundaries rather than trusting the raw
+    AI output directly.
     """
 
     matches = list(OUTLINE_HEADING_RE.finditer(text))
@@ -257,4 +263,54 @@ def parse_outline(text: str) -> list[OutlineSection]:
             OutlineSection(level=len(hashes), title=title.strip(), start=start, end=end, body=body)
         )
 
-    return sections
+    return _resolve_overlaps(sections)
+
+
+def _resolve_siblings(items: list[OutlineSection]) -> None:
+    """Clips overlap between consecutive same-level sections in place, by
+    splitting the overlapping span at its midpoint — so a moment the AI
+    assigned to both neighbors ends up belonging to exactly one of them."""
+
+    items.sort(key=lambda s: s.start)
+    for i in range(1, len(items)):
+        prev = items[i - 1]
+        curr = items[i]
+        if curr.start < prev.end:
+            midpoint = (prev.end + curr.start) / 2
+            prev.end = midpoint
+            curr.start = midpoint
+
+
+def _resolve_overlaps(sections: list[OutlineSection]) -> list[OutlineSection]:
+    """Guarantees every moment in the video belongs to exactly one
+    top-level paragraph, and — within a paragraph that has sub-paragraphs —
+    exactly one sub-paragraph. Groups the flat heading list into
+    (top-level section, its sub-paragraphs) blocks, resolves overlap among
+    top-level sections first, then clips and resolves each block's own
+    sub-paragraphs against its (possibly now-adjusted) parent."""
+
+    if not sections:
+        return sections
+
+    blocks: list[tuple[OutlineSection, list[OutlineSection]]] = []
+    for section in sections:
+        if section.level == 2 or not blocks:
+            blocks.append((section, []))
+        else:
+            blocks[-1][1].append(section)
+
+    _resolve_siblings([top for top, _ in blocks])
+
+    for top, children in blocks:
+        if not children:
+            continue
+        for child in children:
+            child.start = max(child.start, top.start)
+            child.end = min(child.end, top.end)
+        _resolve_siblings(children)
+
+    result: list[OutlineSection] = []
+    for top, children in blocks:
+        result.append(top)
+        result.extend(children)
+    return result

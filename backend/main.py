@@ -18,9 +18,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .ai import ClaudeNotConfiguredError, generate_edit
-from .editor import Cut, calculate_keep_segments, normalize_cuts
-from .parser import ParsedResponse, parse_ai_response, parse_outline
-from .render import FFmpegNotFoundError, get_duration, render_video
+from .chunker import TextChunk, chunk_by_outline, chunk_kept_cues, kept_cues
+from .editor import Cut, calculate_keep_segments, map_to_output_timeline, normalize_cuts
+from .parser import ParsedResponse, parse_ai_response, parse_outline, parse_vtt
+from .render import FFmpegNotFoundError, get_duration, render_video, render_video_with_audio
+from .tts import VoiceNotAvailableError, list_available_voices, synthesize_to_wav
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MEDIA_DIR = BASE_DIR / "media"
@@ -35,6 +37,7 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 WORKSPACE_DIR = BASE_DIR / "workspace"
 OUTLINE_PATH = WORKSPACE_DIR / "outline.md"
 CUTS_PATH = WORKSPACE_DIR / "cuts.md"
+CHUNK_AUDIO_DIR = WORKSPACE_DIR / "chunk_audio"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -93,6 +96,7 @@ async def upload_video(
         (WORKSPACE_DIR / "subtitles.vtt").write_text(vtt_text, encoding="utf-8")
     OUTLINE_PATH.unlink(missing_ok=True)
     CUTS_PATH.unlink(missing_ok=True)
+    shutil.rmtree(CHUNK_AUDIO_DIR, ignore_errors=True)
 
     PROJECTS[project_id] = {
         "video_path": str(video_path),
@@ -208,6 +212,145 @@ async def outline_cuts(project_id: str = Form(...), sections_json: str = Form(..
     return _build_cuts_response(cuts, project["duration"])
 
 
+def _build_voice_chunks(project: dict, normalized_cuts: list[Cut]) -> tuple[list[TextChunk], int, int, str]:
+    """One chunk per outline paragraph/sub-paragraph when workspace/outline.md
+    exists and parses (matching whatever granularity Step 1 already chose),
+    otherwise falls back to ~500-character chunks. Used both when
+    generating/listing chunks and when re-deriving chunk indices at render
+    time — these must stay in lockstep, or a chunk's audio could get
+    matched to the wrong index."""
+
+    all_cues = parse_vtt(project["vtt_text"])
+    surviving_cues = kept_cues(all_cues, normalized_cuts)
+
+    outline_sections = []
+    if OUTLINE_PATH.exists():
+        outline_sections = parse_outline(OUTLINE_PATH.read_text(encoding="utf-8"))
+
+    if outline_sections:
+        chunks = chunk_by_outline(surviving_cues, outline_sections)
+        mode = "outline"
+    else:
+        chunks = chunk_kept_cues(surviving_cues)
+        mode = "character-count"
+
+    return chunks, len(surviving_cues), len(all_cues), mode
+
+
+@app.post("/api/transcript-chunks")
+async def transcript_chunks(project_id: str = Form(...), cuts_json: str = Form(...)):
+    """Text of everything the current cuts would NOT remove, split into
+    voice-over chunks — one per outline paragraph/sub-paragraph if Step 1
+    has been run, otherwise ~500-character chunks as a fallback."""
+    project = _get_project(project_id)
+
+    if not project.get("vtt_text"):
+        raise HTTPException(400, "No subtitles uploaded for this project.")
+
+    try:
+        raw_cuts = json.loads(cuts_json)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Invalid cuts JSON")
+
+    cuts = [Cut(start=float(c["start"]), end=float(c["end"])) for c in raw_cuts]
+    normalized_cuts = normalize_cuts(cuts, project["duration"])
+
+    chunks, kept_cue_count, total_cue_count, mode = _build_voice_chunks(project, normalized_cuts)
+
+    return {
+        "chunks": [
+            {
+                "text": c.text,
+                "start": c.start,
+                "end": c.end,
+                "slot_duration": c.slot_duration,
+                "title": c.title,
+            }
+            for c in chunks
+        ],
+        "kept_cue_count": kept_cue_count,
+        "total_cue_count": total_cue_count,
+        "chunking_mode": mode,
+    }
+
+
+def _chunk_audio_result(chunk_index: int, audio_path: Path, slot_duration: float) -> dict:
+    try:
+        audio_duration = get_duration(str(audio_path))
+    except FFmpegNotFoundError as exc:
+        raise HTTPException(500, str(exc))
+    except Exception as exc:
+        raise HTTPException(400, f"Could not read audio file: {exc}")
+
+    overflow = max(0.0, audio_duration - slot_duration)
+
+    return {
+        "chunk_index": chunk_index,
+        "audio_duration": audio_duration,
+        "slot_duration": slot_duration,
+        "fits": overflow <= 0.05,
+        "overflow_seconds": overflow,
+    }
+
+
+@app.post("/api/transcript-chunks/audio")
+async def upload_chunk_audio(
+    project_id: str = Form(...),
+    chunk_index: int = Form(...),
+    slot_duration: float = Form(...),
+    audio: UploadFile = File(...),
+):
+    """Store a voice-over recording for one chunk and check it isn't longer
+    than the video slot it would replace."""
+    _get_project(project_id)
+
+    CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(audio.filename or "audio.mp3").suffix or ".mp3"
+
+    for old in CHUNK_AUDIO_DIR.glob(f"chunk_{chunk_index:04d}.*"):
+        old.unlink()
+
+    audio_path = CHUNK_AUDIO_DIR / f"chunk_{chunk_index:04d}{suffix}"
+    with open(audio_path, "wb") as f:
+        while data := await audio.read(1024 * 1024):
+            f.write(data)
+
+    return _chunk_audio_result(chunk_index, audio_path, slot_duration)
+
+
+@app.get("/api/tts/voices")
+async def tts_voices():
+    return {"voices": list_available_voices()}
+
+
+@app.post("/api/transcript-chunks/tts")
+async def generate_chunk_tts(
+    project_id: str = Form(...),
+    chunk_index: int = Form(...),
+    text: str = Form(...),
+    slot_duration: float = Form(...),
+    voice: str = Form(...),
+):
+    """Generate a chunk's voice-over locally with Piper (free, offline, no
+    API key) and check it isn't longer than the video slot it would
+    replace."""
+    _get_project(project_id)
+
+    CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+
+    for old in CHUNK_AUDIO_DIR.glob(f"chunk_{chunk_index:04d}.*"):
+        old.unlink()
+
+    audio_path = CHUNK_AUDIO_DIR / f"chunk_{chunk_index:04d}.wav"
+
+    try:
+        synthesize_to_wav(text, voice, str(audio_path))
+    except VoiceNotAvailableError as exc:
+        raise HTTPException(400, str(exc))
+
+    return _chunk_audio_result(chunk_index, audio_path, slot_duration)
+
+
 @app.get("/api/workspace/cuts")
 async def workspace_cuts(project_id: str):
     project = _get_project(project_id)
@@ -283,6 +426,112 @@ async def render(project_id: str = Form(...), cuts_json: str = Form(...)):
 
     thread = threading.Thread(
         target=_run_render, args=(project_id, keep_segments, output_path), daemon=True
+    )
+    thread.start()
+
+    return {"status": "started"}
+
+
+def _run_render_with_audio(
+    project_id: str,
+    keep_segments: list[tuple[float, float]],
+    output_path: Path,
+    keep_original_audio: bool,
+    voice_overlays: list[tuple[float, str]],
+    music_path: str | None,
+    music_db: float,
+) -> None:
+    project = PROJECTS[project_id]
+    try:
+        render_video_with_audio(
+            project["video_path"],
+            str(output_path),
+            keep_segments,
+            keep_original_audio,
+            voice_overlays,
+            music_path,
+            music_db,
+        )
+        project["status"] = "done"
+        project["output_path"] = str(output_path)
+    except Exception as exc:
+        project["status"] = "error"
+        project["error"] = str(exc)
+
+
+@app.post("/api/render-with-audio")
+async def render_with_audio(
+    project_id: str = Form(...),
+    cuts_json: str = Form(...),
+    keep_original_audio: bool = Form(...),
+    music_db: float = Form(-5.0),
+    music: UploadFile | None = File(None),
+):
+    """Like /api/render, but with a custom audio mix: optionally drop the
+    original audio track entirely, optionally loop a background music file
+    under the whole video, and overlay every already-generated chunk
+    voice-over (workspace/chunk_audio/) at its mapped position in the final
+    timeline."""
+    project = _get_project(project_id)
+
+    try:
+        raw_cuts = json.loads(cuts_json)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Invalid cuts JSON")
+
+    cuts = [Cut(start=float(c["start"]), end=float(c["end"])) for c in raw_cuts]
+    normalized = normalize_cuts(cuts, project["duration"])
+    keep_segments = calculate_keep_segments(normalized, project["duration"])
+
+    if not keep_segments:
+        raise HTTPException(400, "Every segment was cut — nothing would be left to render.")
+
+    # Re-derive the same chunk list the user saw when generating/uploading
+    # voice-over (same cuts -> same chunk indices), then map each chunk
+    # that has audio to its position in the OUTPUT timeline.
+    voice_overlays: list[tuple[float, str]] = []
+    if project.get("vtt_text") and CHUNK_AUDIO_DIR.exists():
+        chunks, _, _, _ = _build_voice_chunks(project, normalized)
+
+        for index, chunk in enumerate(chunks):
+            matches = [
+                path
+                for path in CHUNK_AUDIO_DIR.glob(f"chunk_{index:04d}.*")
+                if not path.name.startswith("_music")
+            ]
+            if not matches:
+                continue
+            output_start = map_to_output_timeline(chunk.start, keep_segments)
+            voice_overlays.append((output_start, str(matches[0])))
+
+    music_path = None
+    if music is not None:
+        CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+        suffix = Path(music.filename or "music.mp3").suffix or ".mp3"
+        music_file_path = CHUNK_AUDIO_DIR / f"_music_upload{suffix}"
+        with open(music_file_path, "wb") as f:
+            while data := await music.read(1024 * 1024):
+                f.write(data)
+        music_path = str(music_file_path)
+
+    output_name = f"{project_id}_edited.mp4"
+    output_path = OUTPUT_DIR / output_name
+
+    project["status"] = "rendering"
+    project["error"] = None
+
+    thread = threading.Thread(
+        target=_run_render_with_audio,
+        args=(
+            project_id,
+            keep_segments,
+            output_path,
+            keep_original_audio,
+            voice_overlays,
+            music_path,
+            music_db,
+        ),
+        daemon=True,
     )
     thread.start()
 

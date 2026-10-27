@@ -76,14 +76,36 @@ When asked to do "step 1":
    contains a few distinct beats worth separating (e.g. within a "rise
    through Europe" paragraph, one sub-paragraph per individual fight).
 3. Every cue in the transcript must fall inside exactly one paragraph or
-   sub-paragraph. Don't skip content, and don't let spans overlap.
+   sub-paragraph — never zero, never two. **Consecutive paragraphs must
+   share a boundary: the end timestamp of paragraph A must equal the start
+   timestamp of the very next paragraph B — not overlap it, not leave a
+   gap.** The same applies between consecutive sub-paragraphs within the
+   same parent paragraph, and the first/last sub-paragraph must align
+   exactly with its parent's own start/end.
+   - **The common mistake that breaks this:** auto-caption cues routinely
+     overlap their own neighbors in time (cue N might run 01:10–01:15 while
+     cue N+1 runs 01:12–01:18). If you pick paragraph A's end from "the
+     last cue that feels like it belongs to A" and paragraph B's start from
+     "the first cue that feels like it belongs to B" independently, you can
+     end up choosing two different, mutually-overlapping cues — producing
+     exactly the overlap this rule forbids. Instead, pick **one single
+     boundary point in time** where A conceptually ends and B begins, and
+     use that **same timestamp** for both A's end and B's start, even if
+     neither cue's own start/end lines up perfectly — prefer the boundary
+     between two cues that do NOT overlap each other, if one exists nearby.
+   - Before finalizing, scan every consecutive pair of paragraphs (and
+     every consecutive pair of sub-paragraphs under the same parent) and
+     confirm `end[i] == start[i+1]` exactly. If any pair doesn't match, fix
+     it before writing the file — don't rely on the app to clean this up
+     for you.
 4. For each paragraph/sub-paragraph, write a heading with a short
-   descriptive title and its exact start/end timestamps, **copied
-   verbatim from the first and last cue in that span** (same
-   never-invent-a-timestamp rule as everywhere else here), followed by a
-   short prose summary (2-6 sentences) of what is actually said in that
-   span, in your own words. This is a human-reading summary, not a
-   cue-by-cue transcription.
+   descriptive title and its start/end timestamps. These should still be
+   real cue timestamps from the transcript (never invented or rounded),
+   but per rule 3, the shared boundary between two neighbors is a single
+   chosen value, not independently "whichever cue felt right" on each
+   side. Follow the heading with a short prose summary (2-6 sentences) of
+   what is actually said in that span, in your own words. This is a
+   human-reading summary, not a cue-by-cue transcription.
 5. Write the result to `workspace/outline.md`, in **exactly** this
    format — the app parses it automatically to build a navigable view
    with click-to-seek timestamps, so the heading pattern must match
@@ -110,6 +132,51 @@ When asked to do "step 1":
 
 6. Also show the outline in your reply, so I can see it without opening
    the file.
+
+#### Step 1 worked example — fixing an overlap before it happens
+
+**Input TRANSCRIPT (excerpt, two topics back to back):**
+```
+00:03:15.100 --> 00:03:18.900
+He looks Armenian. His mom's white Texan, but Dylan looks Armenian
+
+00:03:44.200 --> 00:03:49.800
+Did you train with other Armenian UFC fighters? Yeah, I trained with Melsik, uh Edmond
+
+00:03:47.000 --> 00:03:52.000
+Tarverdyan. Yeah, so but they're in different weight classes
+```
+
+**Wrong (what naturally happens if you don't think about this):** you pick
+paragraph A's end from "the last cue that feels like it's about Dylan" —
+that's the cue ending `00:03:49.800`. You pick paragraph B's start from "the
+first cue that feels like it's about Melsik training" — that's the cue
+starting `00:03:47.000`. Both choices feel locally reasonable, but they
+overlap by 2.7 seconds:
+```
+## Dylan looks Armenian (00:03:15.100 - 00:03:49.800)
+## Training with Melsik and Edmond Tarverdyan (00:03:47.000 - 00:04:...)
+```
+This is the exact mistake rule 3 forbids — two different cues were picked
+independently instead of one shared boundary.
+
+**Right:** notice the middle cue (`00:03:44.200 --> 00:03:49.800`) itself
+bundles both topics — it contains the question ("did you train with other
+Armenian fighters") AND the first words of the answer ("Yeah, I trained
+with Melsik"). Auto-captions often fuse a question and the start of its
+answer into one cue like this. You can't split a cue's text in half, so
+pick **one of its own real edges** as the shared boundary and accept that
+the whole cue goes to one side:
+```
+## Dylan looks Armenian (00:03:15.100 - 00:03:44.200)
+## Training with Melsik and Edmond Tarverdyan (00:03:44.200 - 00:04:...)
+```
+Here `00:03:44.200` is reused as both A's end and B's start — a real cue
+timestamp, not invented, and no overlap. The app's own merge logic (not
+your job) will route the "Did you train..." cue's text to whichever
+paragraph makes more sense once cuts are applied — you don't need to
+agonize over getting a bundled cue's content perfectly split, you just need
+to **never state two different, overlapping timestamps** as the boundary.
 
 **Step 1 never changes the transcript, and never proposes cuts.** It only
 reads and describes — if I haven't given an editing instruction, don't

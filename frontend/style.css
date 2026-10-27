@@ -258,3 +258,11 @@ td.time {
 .chunk-audio-status.warning {
   color: #e55;
 }
+
+.chunk-audio-player {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  height: 32px;
+  margin-top: 6px;
+}

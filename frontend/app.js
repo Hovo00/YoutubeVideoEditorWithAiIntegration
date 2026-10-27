@@ -511,6 +511,16 @@ function renderChunks() {
     const audioStatus = document.createElement("div");
     audioStatus.className = "muted chunk-audio-status";
 
+    const audioPlayer = document.createElement("audio");
+    audioPlayer.controls = true;
+    audioPlayer.className = "chunk-audio-player";
+    audioPlayer.style.display = "none";
+
+    function refreshAudioPlayer() {
+      audioPlayer.src = `/api/transcript-chunks/audio/${index}?t=${Date.now()}`;
+      audioPlayer.style.display = "block";
+    }
+
     uploadBtn.addEventListener("click", async () => {
       const file = audioInput.files[0];
       if (!file) {
@@ -540,10 +550,11 @@ function renderChunks() {
       }
 
       showAudioFitResult(audioStatus, await response.json());
+      refreshAudioPlayer();
     });
 
     row.append(copyBtn, audioInput, uploadBtn);
-    card.append(head, textEl, row, audioStatus);
+    card.append(head, textEl, row, audioStatus, audioPlayer);
 
     if (state.ttsVoices.length > 0) {
       const ttsRow = document.createElement("div");
@@ -586,6 +597,7 @@ function renderChunks() {
           }
 
           showAudioFitResult(audioStatus, await response.json());
+          refreshAudioPlayer();
         } finally {
           generateBtn.disabled = false;
         }

@@ -351,6 +351,20 @@ async def generate_chunk_tts(
     return _chunk_audio_result(chunk_index, audio_path, slot_duration)
 
 
+@app.get("/api/transcript-chunks/audio/{chunk_index}")
+async def get_chunk_audio(chunk_index: int):
+    """Serves whatever audio currently exists for one chunk (generated or
+    uploaded) so the app can play it back inline."""
+    matches = [
+        path
+        for path in CHUNK_AUDIO_DIR.glob(f"chunk_{chunk_index:04d}.*")
+        if not path.name.startswith("_music")
+    ]
+    if not matches:
+        raise HTTPException(404, "No audio generated for this chunk yet.")
+    return FileResponse(matches[0])
+
+
 @app.get("/api/workspace/cuts")
 async def workspace_cuts(project_id: str):
     project = _get_project(project_id)

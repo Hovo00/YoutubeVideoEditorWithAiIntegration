@@ -69,15 +69,26 @@ def calculate_keep_segments(cuts: list[Cut], duration: float) -> list[tuple[floa
 def map_to_output_timeline(time: float, keep_segments: list[tuple[float, float]]) -> float:
     """Maps a point in the ORIGINAL (pre-cut) timeline to where it lands in
     the final rendered video, where kept segments are concatenated
-    back-to-back with cut gaps closed. `time` is expected to fall inside one
-    of `keep_segments` (true for any kept cue, by construction)."""
+    back-to-back with cut gaps closed.
+
+    `time` is NOT guaranteed to fall inside a keep segment — a cue that
+    starts inside a cut region but extends past the cut's end is correctly
+    treated as "kept" elsewhere (it isn't fully contained in the cut, so its
+    tail content would be lost if dropped), but its own start timestamp can
+    land squarely inside the cut itself. There's no corresponding instant in
+    the output for a point inside a cut, so such a point is mapped to
+    wherever the output jumps to right after that cut — the start of the
+    next kept segment — rather than falling through to a fallback that
+    silently placed it at the very end of the video."""
 
     offset = 0.0
     for start, end in keep_segments:
-        if start <= time <= end:
+        if time < start:
+            return offset
+        if time <= end:
             return offset + (time - start)
         offset += end - start
 
-    # Falls outside every kept segment (shouldn't happen for a genuinely
-    # kept cue) — clamp to the end of the output instead of guessing.
+    # Past every kept segment entirely (e.g. a cue after a trailing cut with
+    # nothing kept afterward) — only sane place left is the very end.
     return offset

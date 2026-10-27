@@ -3,6 +3,7 @@ const state = {
   duration: 0,
   cuts: [], // {start, end, text, reason, enabled}
   pollTimer: null,
+  outlineSections: [], // {level, title, start, end, body}
 };
 
 function formatTime(seconds) {
@@ -19,6 +20,41 @@ function formatTime(seconds) {
 
 function showStep(id) {
   document.getElementById(id).style.display = "block";
+}
+
+// --- Session persistence (survive a page reload without re-uploading, ----
+// which would otherwise wipe workspace/outline.md and cuts.md) -----------
+
+const SESSION_KEY = "videoeditory_session";
+
+function saveSession() {
+  localStorage.setItem(
+    SESSION_KEY,
+    JSON.stringify({ projectId: state.projectId, duration: state.duration })
+  );
+}
+
+function restoreSession() {
+  const raw = localStorage.getItem(SESSION_KEY);
+  if (!raw) return;
+
+  let saved;
+  try {
+    saved = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  if (!saved || !saved.projectId) return;
+
+  state.projectId = saved.projectId;
+  state.duration = saved.duration;
+
+  document.getElementById("preview").src = "/api/workspace/video";
+  document.getElementById("videoInfo").textContent =
+    `Restored previous session — duration ${formatTime(saved.duration)}`;
+
+  showStep("stepOutline");
+  showStep("step2");
 }
 
 // --- Step 1: load video -----------------------------------------------
@@ -56,11 +92,49 @@ document.getElementById("loadBtn").addEventListener("click", async () => {
   const data = await response.json();
   state.projectId = data.project_id;
   state.duration = data.duration;
+  saveSession();
 
   info.textContent = `Loaded "${data.filename}" — duration ${formatTime(data.duration)}`;
 
   showStep("stepOutline");
   showStep("step2");
+});
+
+// --- Copy-paste prompts for Claude Desktop / claude terminal --------------
+
+async function copyToClipboard(text, button) {
+  const original = button.textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    window.prompt("Copy this manually (clipboard access was blocked):", text);
+    return;
+  }
+  button.textContent = "Copied!";
+  setTimeout(() => {
+    button.textContent = original;
+  }, 1500);
+}
+
+const STEP1_PROMPT =
+  "Read AI_EDITING_INSTRUCTIONS.md in this project folder, then do Step 1 " +
+  "(generate the outline) exactly as it describes there.";
+
+document.getElementById("copyStep1Btn").addEventListener("click", (e) => {
+  copyToClipboard(STEP1_PROMPT, e.currentTarget);
+});
+
+document.getElementById("copyStep2Btn").addEventListener("click", (e) => {
+  const instruction = document.getElementById("instructionInput").value.trim();
+  if (!instruction) {
+    alert("Type what you want changed first.");
+    return;
+  }
+  const prompt =
+    "Read AI_EDITING_INSTRUCTIONS.md in this project folder if you haven't " +
+    "already this conversation, then do Step 2 for this instruction: " +
+    instruction;
+  copyToClipboard(prompt, e.currentTarget);
 });
 
 // --- Step 2 (outline): load workspace/outline.md ---------------------------
@@ -80,18 +154,24 @@ document.getElementById("loadOutlineBtn").addEventListener("click", async () => 
   }
 
   const data = await response.json();
+  state.outlineSections = data.sections;
   statusEl.textContent = data.sections.length
     ? `${data.sections.length} section(s).`
     : "outline.md is empty so far.";
 
   const preview = document.getElementById("preview");
 
-  for (const section of data.sections) {
+  data.sections.forEach((section, index) => {
     const card = document.createElement("div");
     card.className = "outline-section" + (section.level === 3 ? " outline-sub" : "");
 
     const head = document.createElement("div");
     head.className = "outline-head";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "outline-checkbox";
+    checkbox.dataset.index = String(index);
 
     const seekLink = document.createElement("a");
     seekLink.href = "#";
@@ -107,7 +187,7 @@ document.getElementById("loadOutlineBtn").addEventListener("click", async () => 
     title.className = "outline-title";
     title.textContent = section.title;
 
-    head.append(seekLink, title);
+    head.append(checkbox, seekLink, title);
 
     const body = document.createElement("p");
     body.className = "outline-body";
@@ -115,7 +195,36 @@ document.getElementById("loadOutlineBtn").addEventListener("click", async () => 
 
     card.append(head, body);
     viewEl.appendChild(card);
+  });
+});
+
+document.getElementById("cutSelectedBtn").addEventListener("click", async () => {
+  if (!state.projectId) {
+    alert("Load a video first.");
+    return;
   }
+
+  const checked = Array.from(document.querySelectorAll(".outline-checkbox:checked"));
+  if (checked.length === 0) {
+    alert("Check at least one paragraph or sub-paragraph to remove first.");
+    return;
+  }
+
+  const sections = checked.map((cb) => state.outlineSections[Number(cb.dataset.index)]);
+
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+  formData.append("sections_json", JSON.stringify(sections));
+
+  const response = await fetch("/api/outline-cuts", { method: "POST", body: formData });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    alert(`Could not build cuts from selection: ${err.detail || response.statusText}`);
+    return;
+  }
+
+  applyCutsResponse(await response.json());
 });
 
 // --- Step 2: generate or parse cuts --------------------------------------
@@ -353,3 +462,5 @@ function pollStatus() {
     }
   }, 1500);
 }
+
+restoreSession();

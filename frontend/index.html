@@ -31,26 +31,46 @@
       <h2>2. Generate a readable outline <span class="muted">(optional)</span></h2>
       <p class="muted">
         In Claude Desktop (or a <code>claude</code> terminal), attach/<code>cd</code> into
-        this project folder and say <strong>"do step 1"</strong> — it already knows what
-        that means from <code>AI_EDITING_INSTRUCTIONS.md</code>. It'll read
-        <code>workspace/subtitles.vtt</code> and write <code>workspace/outline.md</code>:
-        the transcript broken into topic-based paragraphs instead of raw cues.
+        this project folder. Click "Copy message for Claude" below, paste it as your
+        first message, and send it — the message points Claude at
+        <code>AI_EDITING_INSTRUCTIONS.md</code> so it reads the rules before doing
+        anything. It'll read <code>workspace/subtitles.vtt</code> and write
+        <code>workspace/outline.md</code>: the transcript broken into topic-based
+        paragraphs instead of raw cues.
       </p>
       <div class="row">
+        <button id="copyStep1Btn">Copy message for Claude</button>
         <button id="loadOutlineBtn">Load outline</button>
       </div>
       <div id="outlineStatus" class="muted"></div>
+      <p class="muted">
+        Or skip Claude entirely for simple cuts: check the box on any paragraph or
+        sub-paragraph below to mark it for removal, then click "Cut selected sections" —
+        no AI involved, the app uses the outline's own timestamps.
+      </p>
       <div id="outlineView"></div>
+      <div class="row">
+        <button id="cutSelectedBtn">Cut selected sections</button>
+      </div>
     </section>
 
     <section class="step" id="step2" style="display:none">
       <h2>3. Describe the edit</h2>
 
       <div id="aiEditBox">
-        <p class="muted">Tell Claude what to change. It has the full <code>AI_EDITING_INSTRUCTIONS.md</code> rules as its system prompt.</p>
+        <p class="muted">
+          Type the edit you want below. Either click "Generate edit with Claude" to send it
+          through this app automatically, or click "Copy message for Claude" and paste it into
+          Claude Desktop/terminal yourself — that message also points Claude at
+          <code>AI_EDITING_INSTRUCTIONS.md</code> so it knows the rules and writes
+          <code>workspace/cuts.md</code> for you.
+        </p>
         <div class="row">
           <input type="text" id="instructionInput" placeholder="e.g. make this about 15 minutes, keep the main chronology" />
           <button id="generateBtn">Generate edit with Claude</button>
+        </div>
+        <div class="row">
+          <button id="copyStep2Btn">Copy message for Claude</button>
         </div>
         <div id="aiEditStatus" class="muted"></div>
       </div>

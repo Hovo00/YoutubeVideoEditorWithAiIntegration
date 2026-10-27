@@ -186,6 +186,11 @@ td.time {
   flex-wrap: wrap;
 }
 
+.outline-checkbox {
+  align-self: center;
+  cursor: pointer;
+}
+
 .outline-time {
   font-family: monospace;
   font-size: 0.85em;

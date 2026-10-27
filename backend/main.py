@@ -107,11 +107,13 @@ async def upload_video(
     return {"project_id": project_id, "duration": duration, "filename": video.filename}
 
 
-def _cuts_response(parsed: ParsedResponse, duration: float) -> dict:
-    cuts = [
-        Cut(start=r.start, end=r.end, text=r.text, reason=r.reason)
-        for r in parsed.removed
-    ]
+def _build_cuts_response(
+    cuts: list[Cut],
+    duration: float,
+    warnings: list[str] | None = None,
+    change_log: str = "",
+    questions: str = "",
+) -> dict:
     normalized = normalize_cuts(cuts, duration)
     removed_seconds = sum(c.end - c.start for c in normalized)
 
@@ -123,10 +125,20 @@ def _cuts_response(parsed: ParsedResponse, duration: float) -> dict:
         "removed_seconds": removed_seconds,
         "original_duration": duration,
         "new_duration": max(0.0, duration - removed_seconds),
-        "warnings": parsed.warnings,
-        "change_log": parsed.change_log,
-        "questions": parsed.questions,
+        "warnings": warnings or [],
+        "change_log": change_log,
+        "questions": questions,
     }
+
+
+def _cuts_response(parsed: ParsedResponse, duration: float) -> dict:
+    cuts = [
+        Cut(start=r.start, end=r.end, text=r.text, reason=r.reason)
+        for r in parsed.removed
+    ]
+    return _build_cuts_response(
+        cuts, duration, warnings=parsed.warnings, change_log=parsed.change_log, questions=parsed.questions
+    )
 
 
 @app.post("/api/parse")
@@ -134,6 +146,17 @@ async def parse_ai_text(project_id: str = Form(...), ai_response: str = Form(...
     project = _get_project(project_id)
     parsed = parse_ai_response(ai_response)
     return _cuts_response(parsed, project["duration"])
+
+
+@app.get("/api/workspace/video")
+async def workspace_video():
+    """Serves the current workspace video so the browser can restore the
+    preview after a page reload, without needing to re-upload (which would
+    wipe outline.md/cuts.md as if it were a new project)."""
+    matches = list(WORKSPACE_DIR.glob("video.*"))
+    if not matches:
+        raise HTTPException(404, "No video in the workspace yet — upload one first.")
+    return FileResponse(matches[0])
 
 
 @app.get("/api/workspace/outline")
@@ -157,6 +180,32 @@ async def workspace_outline():
             for s in sections
         ]
     }
+
+
+@app.post("/api/outline-cuts")
+async def outline_cuts(project_id: str = Form(...), sections_json: str = Form(...)):
+    """Turn user-selected outline sections directly into cuts, without
+    asking an AI — the outline's timestamps already come straight from the
+    original cues (see Step 1 in AI_EDITING_INSTRUCTIONS.md), so a section
+    the user picked for removal can be treated as a cut covering exactly
+    that section's time range. Overlap between a selected parent paragraph
+    and its sub-paragraphs is handled by the normal merge logic."""
+    project = _get_project(project_id)
+
+    try:
+        raw_sections = json.loads(sections_json)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Invalid sections JSON")
+
+    cuts = [
+        Cut(start=float(s["start"]), end=float(s["end"]), text=s.get("title", ""), reason="Removed via outline selection")
+        for s in raw_sections
+    ]
+
+    if not cuts:
+        raise HTTPException(400, "No sections selected.")
+
+    return _build_cuts_response(cuts, project["duration"])
 
 
 @app.get("/api/workspace/cuts")

@@ -489,16 +489,17 @@ function renderChunks() {
 
     head.append(indexEl, timeEl, slotEl);
 
-    const textEl = document.createElement("p");
-    textEl.className = "chunk-text";
-    textEl.textContent = chunk.text;
+    const textEl = document.createElement("textarea");
+    textEl.className = "chunk-text-input";
+    textEl.value = chunk.text;
+    textEl.rows = Math.min(10, Math.max(3, Math.ceil(chunk.text.length / 80)));
 
     const row = document.createElement("div");
     row.className = "row";
 
     const copyBtn = document.createElement("button");
     copyBtn.textContent = "Copy text";
-    copyBtn.addEventListener("click", () => copyToClipboard(chunk.text, copyBtn));
+    copyBtn.addEventListener("click", () => copyToClipboard(textEl.value, copyBtn));
 
     const audioInput = document.createElement("input");
     audioInput.type = "file";
@@ -567,7 +568,7 @@ function renderChunks() {
         const formData = new FormData();
         formData.append("project_id", state.projectId);
         formData.append("chunk_index", String(index));
-        formData.append("text", chunk.text);
+        formData.append("text", textEl.value);
         formData.append("slot_duration", String(chunk.slot_duration));
         formData.append("voice", voiceSelect.value);
 

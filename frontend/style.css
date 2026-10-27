@@ -242,10 +242,13 @@ td.time {
   white-space: nowrap;
 }
 
-.chunk-text {
+.chunk-text-input {
+  display: block;
   margin: 8px 0 0;
-  color: #bbb;
+  color: #eee;
   line-height: 1.5;
+  font-family: Arial, sans-serif;
+  font-size: 0.95em;
 }
 
 .chunk-audio-status {

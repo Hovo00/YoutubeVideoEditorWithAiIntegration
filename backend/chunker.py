@@ -10,12 +10,25 @@ yet.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from .editor import Cut, normalize_cuts
 from .parser import Cue, OutlineSection
 
 TARGET_CHUNK_CHARS = 500
+
+# Auto-captions mark non-speech audio events with bracketed tags —
+# "[музыка]" (music), "[аплодисменты]" (applause), "[laughter]", etc. These
+# describe what's happening, they are never actual words anyone said, so a
+# TTS voice-over must never read them aloud. Strips any `[...]` tag from
+# voice-over text (the transcript data itself, used for cutting/display, is
+# untouched — only the text that gets turned into speech is cleaned).
+_BRACKETED_TAG_RE = re.compile(r"\[[^\]]*\]")
+
+
+def _strip_non_speech_tags(text: str) -> str:
+    return " ".join(_BRACKETED_TAG_RE.sub(" ", text).split())
 
 # When two outline sections heavily overlap (a short "aside" topic squeezed
 # between two bigger ones), resolving the overlap can shrink the short one
@@ -81,21 +94,23 @@ def chunk_kept_cues(cues: list[Cue], target_chars: int = TARGET_CHUNK_CHARS) -> 
         if not current:
             return
 
-        text = " ".join(cue.text for cue in current)
-        merged = normalize_cuts(
-            [Cut(start=cue.start, end=cue.end) for cue in current],
-            duration=max(cue.end for cue in current),
-        )
-        slot_duration = sum(m.end - m.start for m in merged)
+        text = _strip_non_speech_tags(" ".join(cue.text for cue in current))
 
-        chunks.append(
-            TextChunk(
-                text=text,
-                start=current[0].start,
-                end=current[-1].end,
-                slot_duration=slot_duration,
+        if text:
+            merged = normalize_cuts(
+                [Cut(start=cue.start, end=cue.end) for cue in current],
+                duration=max(cue.end for cue in current),
             )
-        )
+            slot_duration = sum(m.end - m.start for m in merged)
+
+            chunks.append(
+                TextChunk(
+                    text=text,
+                    start=current[0].start,
+                    end=current[-1].end,
+                    slot_duration=slot_duration,
+                )
+            )
         current = []
         current_len = 0
 
@@ -176,7 +191,7 @@ def chunk_by_outline(kept: list[Cue], outline_sections: list[OutlineSection]) ->
 
     merged_groups: list[dict] = []
     for index, group in enumerate(groups):
-        text_len = sum(len(cue.text) for cue in group["cues"])
+        text_len = len(_strip_non_speech_tags(" ".join(cue.text for cue in group["cues"])))
         if text_len < MIN_CHUNK_CHARS and index + 1 < len(groups):
             groups[index + 1]["titles"] = group["titles"] + groups[index + 1]["titles"]
             groups[index + 1]["cues"] = group["cues"] + groups[index + 1]["cues"]
@@ -190,7 +205,10 @@ def chunk_by_outline(kept: list[Cue], outline_sections: list[OutlineSection]) ->
 
     for group in merged_groups:
         cues = group["cues"]
-        text = " ".join(cue.text for cue in cues)
+        text = _strip_non_speech_tags(" ".join(cue.text for cue in cues))
+        if not text:
+            continue
+
         merged = normalize_cuts(
             [Cut(start=cue.start, end=cue.end) for cue in cues],
             duration=max(cue.end for cue in cues),

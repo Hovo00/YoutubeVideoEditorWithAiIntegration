@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "videoeditory",
-      "runtimeExecutable": "python3",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
       "runtimeArgs": ["run.py"],
       "port": 8000
     }

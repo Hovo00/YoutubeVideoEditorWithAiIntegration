@@ -17,11 +17,13 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import azure_tts
 from .ai import ClaudeNotConfiguredError, generate_edit
 from .chunker import TextChunk, chunk_by_outline, chunk_kept_cues, kept_cues
 from .editor import Cut, calculate_keep_segments, map_to_output_timeline, normalize_cuts
 from .parser import ParsedResponse, parse_ai_response, parse_outline, parse_vtt
 from .render import FFmpegNotFoundError, get_duration, render_video, render_video_with_audio
+from .tts import KNOWN_VOICES as PIPER_KNOWN_VOICES
 from .tts import VoiceNotAvailableError, list_available_voices, synthesize_to_wav
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -320,7 +322,9 @@ async def upload_chunk_audio(
 
 @app.get("/api/tts/voices")
 async def tts_voices():
-    return {"voices": list_available_voices()}
+    voices = [{**v, "provider": "piper"} for v in list_available_voices()]
+    voices += [{**v, "provider": "azure"} for v in azure_tts.list_available_voices()]
+    return {"voices": voices}
 
 
 @app.post("/api/transcript-chunks/tts")
@@ -331,9 +335,10 @@ async def generate_chunk_tts(
     slot_duration: float = Form(...),
     voice: str = Form(...),
 ):
-    """Generate a chunk's voice-over locally with Piper (free, offline, no
-    API key) and check it isn't longer than the video slot it would
-    replace."""
+    """Generate a chunk's voice-over and check it isn't longer than the
+    video slot it would replace. Dispatches to Piper (free, offline, no API
+    key) or Azure AI Speech (paid cloud API, needs AZURE_SPEECH_KEY/REGION)
+    depending on which voice was picked."""
     _get_project(project_id)
 
     CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
@@ -341,12 +346,22 @@ async def generate_chunk_tts(
     for old in CHUNK_AUDIO_DIR.glob(f"chunk_{chunk_index:04d}.*"):
         old.unlink()
 
-    audio_path = CHUNK_AUDIO_DIR / f"chunk_{chunk_index:04d}.wav"
-
-    try:
-        synthesize_to_wav(text, voice, str(audio_path))
-    except VoiceNotAvailableError as exc:
-        raise HTTPException(400, str(exc))
+    if voice in PIPER_KNOWN_VOICES:
+        audio_path = CHUNK_AUDIO_DIR / f"chunk_{chunk_index:04d}.wav"
+        try:
+            synthesize_to_wav(text, voice, str(audio_path))
+        except VoiceNotAvailableError as exc:
+            raise HTTPException(400, str(exc))
+    elif voice in azure_tts.KNOWN_VOICES:
+        audio_path = CHUNK_AUDIO_DIR / f"chunk_{chunk_index:04d}.mp3"
+        try:
+            azure_tts.synthesize_to_file(text, voice, str(audio_path))
+        except azure_tts.AzureNotConfiguredError as exc:
+            raise HTTPException(400, str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc))
+    else:
+        raise HTTPException(400, f"Unknown voice: {voice}")
 
     return _chunk_audio_result(chunk_index, audio_path, slot_duration)
 

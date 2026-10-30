@@ -327,6 +327,11 @@ async def tts_voices():
     return {"voices": voices}
 
 
+@app.get("/api/tts/azure-usage")
+async def azure_usage():
+    return azure_tts.get_usage()
+
+
 @app.post("/api/transcript-chunks/tts")
 async def generate_chunk_tts(
     project_id: str = Form(...),

@@ -447,8 +447,27 @@ document.getElementById("generateChunksBtn").addEventListener("click", async () 
     }
   }
 
+  if (state.ttsVoices.some((v) => v.provider === "azure")) {
+    refreshAzureUsage();
+  }
+
   renderChunks();
 });
+
+async function refreshAzureUsage() {
+  const el = document.getElementById("azureUsageStatus");
+  if (!el) return;
+
+  const response = await fetch("/api/tts/azure-usage");
+  if (!response.ok) return;
+
+  const data = await response.json();
+  const pct = ((data.characters_used / data.free_tier_limit) * 100).toFixed(2);
+  el.textContent =
+    `Azure usage this month (${data.month}): ${data.characters_used.toLocaleString()} / ` +
+    `${data.free_tier_limit.toLocaleString()} characters (${pct}% of free tier).`;
+  el.style.display = "block";
+}
 
 function showAudioFitResult(statusEl, result) {
   if (result.fits) {
@@ -565,15 +584,25 @@ function renderChunks() {
         const option = document.createElement("option");
         option.value = voice.name;
         option.textContent = voice.label;
+        option.dataset.provider = voice.provider;
         voiceSelect.appendChild(option);
       }
 
       const generateBtn = document.createElement("button");
-      generateBtn.textContent = "Generate with Piper (free, local)";
+
+      function updateGenerateBtnLabel() {
+        const provider = voiceSelect.selectedOptions[0]?.dataset.provider;
+        generateBtn.textContent =
+          provider === "azure" ? "Generate with Azure (paid, counts toward quota)" : "Generate with Piper (free, local)";
+      }
+      updateGenerateBtnLabel();
+      voiceSelect.addEventListener("change", updateGenerateBtnLabel);
 
       generateBtn.addEventListener("click", async () => {
+        const provider = voiceSelect.selectedOptions[0]?.dataset.provider;
         generateBtn.disabled = true;
-        audioStatus.textContent = "Generating speech locally...";
+        audioStatus.textContent =
+          provider === "azure" ? "Generating speech via Azure..." : "Generating speech locally...";
         audioStatus.classList.remove("warning");
 
         const formData = new FormData();
@@ -598,6 +627,7 @@ function renderChunks() {
 
           showAudioFitResult(audioStatus, await response.json());
           refreshAudioPlayer();
+          if (provider === "azure") refreshAzureUsage();
         } finally {
           generateBtn.disabled = false;
         }

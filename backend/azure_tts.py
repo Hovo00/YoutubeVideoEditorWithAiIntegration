@@ -10,9 +10,12 @@ covers this; no code changes needed once they're set).
 
 from __future__ import annotations
 
+import json
 import os
 import urllib.error
 import urllib.request
+from datetime import datetime
+from pathlib import Path
 from xml.sax.saxutils import escape
 
 # Russian voices currently offered by Azure AI Speech.
@@ -24,9 +27,45 @@ KNOWN_VOICES = {
 
 _OUTPUT_FORMAT = "audio-24khz-96kbitrate-mono-mp3"
 
+# Azure's free tier is 500,000 characters/month, reset on the calendar
+# month. Tracked here (not under workspace/, which gets wiped on every new
+# upload) so usage persists across projects and server restarts.
+FREE_TIER_CHAR_LIMIT = 500_000
+_USAGE_FILE = Path(__file__).resolve().parent.parent / "azure_tts_usage.json"
+
 
 class AzureNotConfiguredError(RuntimeError):
     pass
+
+
+def _current_month() -> str:
+    return datetime.now().strftime("%Y-%m")
+
+
+def _load_usage() -> dict:
+    if _USAGE_FILE.exists():
+        try:
+            data = json.loads(_USAGE_FILE.read_text(encoding="utf-8"))
+            if data.get("month") == _current_month():
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"month": _current_month(), "characters_used": 0}
+
+
+def _record_usage(char_count: int) -> None:
+    data = _load_usage()
+    data["characters_used"] += char_count
+    _USAGE_FILE.write_text(json.dumps(data), encoding="utf-8")
+
+
+def get_usage() -> dict:
+    data = _load_usage()
+    return {
+        "month": data["month"],
+        "characters_used": data["characters_used"],
+        "free_tier_limit": FREE_TIER_CHAR_LIMIT,
+    }
 
 
 def is_configured() -> bool:
@@ -79,3 +118,5 @@ def synthesize_to_file(text: str, voice_name: str, output_path: str) -> None:
 
     with open(output_path, "wb") as f:
         f.write(audio_bytes)
+
+    _record_usage(len(text))

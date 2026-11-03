@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -24,10 +25,18 @@ ProgressCallback = Callable[[float, str], None]
 
 DEFAULT_WHISPER_MODEL = os.environ.get("WHISPER_MODEL_SIZE", "small")
 
-# Jetson's CUDA-enabled torch build needs the system JetPack CUDA toolkit's
-# cuBLAS ahead of the pip-distributed one on the dynamic linker's search
-# path (see ~/whisper-venv/bin/activate on a validated Jetson setup) —
-# detected via the standard Tegra release marker file, no extra dependency.
+# Jetson's CUDA-enabled torch build needs two extra things on the dynamic
+# linker's search path, beyond whatever the `whisper` process would normally
+# pick up (see ~/whisper-venv/bin/activate on a validated Jetson setup):
+#   1. The system JetPack CUDA toolkit's cuBLAS (not Jetson/iGPU-specific in
+#      the pip-distributed wheel, so it must come from the OS install).
+#   2. The pip-installed `nvidia-cudss-cu12` package's own lib/ directory
+#      (cuDSS isn't part of the base CUDA toolkit at all) — this one lives
+#      *inside whichever venv provides the `whisper` binary*, which isn't
+#      necessarily the same venv running this FastAPI process, so it has to
+#      be located relative to that binary's own path, not hardcoded.
+# Jetson detection is via the standard Tegra release marker file, no extra
+# dependency needed.
 _JETSON_MARKER = Path("/etc/nv_tegra_release")
 _JETSON_CUDA_LIB_PATH = "/usr/local/cuda-12.6/targets/aarch64-linux/lib"
 
@@ -46,28 +55,27 @@ def _is_jetson() -> bool:
     return _JETSON_MARKER.exists()
 
 
-def _select_device() -> str:
-    """Returns 'cuda' if available, defensively falling back to 'cpu' on
-    any failure (including torch itself failing to import) so a broken
-    local CUDA/torch install degrades to slow-but-working CPU transcription
-    instead of crashing ingestion before it starts."""
+def _whisper_venv_nvidia_lib_dirs() -> list[str]:
+    """Finds <venv-root>/lib/python*/site-packages/nvidia/*/lib for
+    whichever venv actually provides the `whisper` binary on PATH — that's
+    where pip-installed packages like nvidia-cudss-cu12 put their .so files.
+    Returns [] if `whisper` isn't found or doesn't look like it's inside a
+    venv (e.g. a system-wide install with no such directory)."""
 
-    try:
-        import torch
+    whisper_bin = shutil.which("whisper")
+    if not whisper_bin:
+        return []
 
-        if torch.cuda.is_available():
-            return "cuda"
-    except Exception:
-        pass
-    return "cpu"
+    venv_root = Path(whisper_bin).resolve().parent.parent
+    return [str(p) for p in venv_root.glob("lib/python3.*/site-packages/nvidia/*/lib")]
 
 
 def _whisper_env() -> dict:
     env = os.environ.copy()
     if _is_jetson():
-        env["LD_LIBRARY_PATH"] = (
-            f"{_JETSON_CUDA_LIB_PATH}:{env.get('LD_LIBRARY_PATH', '')}"
-        )
+        lib_paths = [_JETSON_CUDA_LIB_PATH, *_whisper_venv_nvidia_lib_dirs()]
+        existing = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = ":".join([*lib_paths, existing]) if existing else ":".join(lib_paths)
     return env
 
 
@@ -210,10 +218,15 @@ def transcribe(
     except FFmpegNotFoundError as exc:
         raise TranscriptionError(str(exc)) from exc
 
-    device = _select_device()
-    if on_progress and device == "cpu":
-        on_progress(0.0, "Transcribing on CPU (GPU unavailable) — this will be slower.")
-
+    # Deliberately do NOT pass --device/--fp16 here. The `whisper` binary on
+    # PATH can live in a completely different Python environment/venv than
+    # the one running this FastAPI process (e.g. a dedicated venv with a
+    # hand-tuned CUDA/torch install) — checking torch.cuda.is_available() in
+    # *this* process and forcing that choice onto the subprocess would
+    # silently discard a perfectly working GPU setup in the subprocess's own
+    # environment whenever the orchestrating process itself lacks torch.
+    # Omitting both flags lets Whisper auto-detect CUDA vs CPU (and fp16
+    # support) using whichever environment actually provides the binary.
     command = [
         "whisper", str(audio_path),
         "--model", model_size,
@@ -221,8 +234,6 @@ def transcribe(
         "--task", "transcribe",
         "--output_format", "vtt",
         "--output_dir", str(audio_path.parent),
-        "--device", device,
-        "--fp16", "True" if device == "cuda" else "False",
     ]
 
     lines: list[str] = []
@@ -236,8 +247,9 @@ def transcribe(
         )
     except FileNotFoundError as exc:
         raise TranscriptionError(
-            "Whisper is not installed — run 'pip install openai-whisper' in "
-            "this app's virtual environment."
+            "Whisper is not installed — install 'openai-whisper' (pip install "
+            "openai-whisper) somewhere on this machine and make sure the "
+            "'whisper' command is on PATH for this app (see the setup docs)."
         ) from exc
 
     assert proc.stdout is not None

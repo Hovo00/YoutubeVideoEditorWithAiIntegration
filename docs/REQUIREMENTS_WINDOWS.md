@@ -45,10 +45,16 @@ pip install torch --index-url https://download.pytorch.org/whl/cu121
 
 (Swap `cu121` for whatever CUDA version matches your driver — see the
 [PyTorch install matrix](https://pytorch.org/get-started/locally/) for the exact command.)
-No further configuration is needed — the app auto-detects CUDA and falls back to CPU if
-unavailable or broken.
+No further configuration is needed — `whisper` (installed into this same `.venv` in step 3)
+auto-detects CUDA and falls back to CPU if unavailable or broken, since everything lives in
+one virtual environment on Windows (unlike the Jetson/Linux setup, which needs a second,
+separately-tuned venv — see the Linux doc if that ever applies to you).
 
 If you don't have an NVIDIA GPU, skip this step entirely; CPU transcription still works.
+
+**Optional:** `WHISPER_MODEL_SIZE` env var overrides the default `small` Whisper model
+(e.g. `setx WHISPER_MODEL_SIZE medium`, then open a new terminal) if you want a larger/more
+accurate (but slower) model.
 
 ## 5. Piper voice models (for text-to-speech)
 

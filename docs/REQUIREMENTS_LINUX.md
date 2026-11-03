@@ -70,12 +70,23 @@ pip install --force-reinstall --no-deps torch==2.9.1 torchvision==0.24.1 \
 pip install nvidia-cudss-cu12==0.8.0.10 --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
 ```
 
-This Jetson torch build needs the **system's own JetPack CUDA toolkit's cuBLAS** ahead of
-the pip-distributed one on the dynamic linker's search path — the pip-distributed
-`nvidia-cublas-cu12` wheel is not built for Jetson's iGPU and fails with
-`CUBLAS_STATUS_ALLOC_FAILED` at runtime. Add this to your venv's `bin/activate` (append
-after the existing `PATH=...` line), so it's scoped to just this venv and never touches
-system-wide `ldconfig`:
+This Jetson torch build needs two extra things on the dynamic linker's search path beyond
+what's there by default:
+1. The **system's own JetPack CUDA toolkit's cuBLAS**, ahead of the pip-distributed one —
+   the pip-distributed `nvidia-cublas-cu12` wheel is not built for Jetson's iGPU and fails
+   with `CUBLAS_STATUS_ALLOC_FAILED` at runtime.
+2. The **`nvidia-cudss-cu12` package's own lib directory** (cuDSS isn't part of the base
+   CUDA toolkit at all) — without it you'll see `ImportError: libcudss.so.0: cannot open
+   shared object file`.
+
+**The app itself handles this automatically** — `youtube_ingest.py` detects it's running on
+a Jetson board (via `/etc/nv_tegra_release`) and builds the correct `LD_LIBRARY_PATH` for
+the `whisper` subprocess on every call, dynamically locating whichever venv's `bin/whisper`
+is found on `PATH` and adding that venv's own `nvidia/*/lib` directories after the system
+CUDA path. **You don't need to edit anything for the app to work** — this is only relevant
+if you also want to run `whisper` directly from a terminal yourself (e.g. to test). For
+that, add this to `~/whisper-venv/bin/activate` (append after the existing `PATH=...`
+line), scoped to just this venv:
 
 ```bash
 _SITE_PACKAGES="$VIRTUAL_ENV/lib/python3.10/site-packages"
@@ -85,10 +96,7 @@ unset _SITE_PACKAGES
 
 (Adjust `cuda-12.6` and `python3.10` to match your JetPack/Python version if different.)
 Re-activate the venv (`deactivate` then `source ~/whisper-venv/bin/activate`) after editing
-it. The app itself (`youtube_ingest.py`) applies this same override automatically when
-invoking Whisper if it detects it's running on a Jetson board (via `/etc/nv_tegra_release`)
-— this manual step is only needed so you can also run `whisper` directly from the command
-line for testing.
+it.
 
 Verify CUDA is actually being used:
 
@@ -97,7 +105,33 @@ python3 -c "import torch; print(torch.cuda.is_available())"
 ```
 
 If this still fails, double-check the `nvidia-cudss-cu12` version pin above — a mismatched
-version produces a `libcudss.so.0` import error.
+version produces the same `libcudss.so.0` import error.
+
+## 4c. Making the app actually find this venv's `whisper` (Jetson only)
+
+**This step is the one most likely to get skipped, and the app won't work without it.**
+The main app (started in step 3's `.venv`) and the GPU-correct `whisper` binary (installed
+in the separate `~/whisper-venv` in step 4b) are now two different venvs. `youtube_ingest.py`
+finds `whisper` by searching `PATH` at the moment it needs to run it — it does **not** know
+about `~/whisper-venv` unless you put it on `PATH` yourself, every time, **before** starting
+the app:
+
+```bash
+source .venv/bin/activate
+export PATH="$HOME/whisper-venv/bin:$PATH"
+python run.py
+```
+
+The `export PATH=...` line must come **after** activating `.venv` (so it ends up first,
+taking priority over anything `.venv/bin` might also provide) and **before** `python run.py`.
+Without it, either you'll see `Whisper is not installed` (if `.venv` has no `whisper` at
+all), or a non-GPU/potentially broken `whisper` will silently run instead (if `.venv`'s own
+`openai-whisper` install shadows the correct one). Add the `export PATH=...` line to your
+`~/.bashrc` (after wherever you normally activate `.venv`) so you don't have to retype it
+every session.
+
+**Optional:** `WHISPER_MODEL_SIZE` env var overrides the default `small` Whisper model
+(e.g. `export WHISPER_MODEL_SIZE=medium`) — set it in the same shell before `python run.py`.
 
 ## 5. Piper voice models (for text-to-speech)
 
@@ -131,6 +165,9 @@ resource in the Azure portal — the free tier covers 500,000 characters/month.
 ```bash
 python run.py
 ```
+
+**On Jetson, don't skip step 4c above** — `python run.py` alone won't find the GPU-correct
+`whisper` binary unless you've exported `PATH` to include `~/whisper-venv/bin` first.
 
 Opens automatically at `http://127.0.0.1:8000`. On a headless/SSH session where a browser
 can't open automatically, just navigate to that URL yourself.

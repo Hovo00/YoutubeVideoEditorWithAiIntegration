@@ -5,18 +5,69 @@ touches the video file.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from typing import Callable
 
 
 class FFmpegNotFoundError(RuntimeError):
     pass
 
 
-# Software x264 is CPU-bound on this machine (no usable hardware encoder);
-# "veryfast" trades a small amount of quality for a large speed gain over
-# "medium". Tune these if you want to trade speed for quality.
+# Software x264 fallback: "veryfast" trades a small amount of quality for a
+# large speed gain over "medium". Tune these if you want to trade speed for quality.
 X264_PRESET = "veryfast"
 X264_CRF = "20"
+X264_ARGS = ["-c:v", "libx264", "-preset", X264_PRESET, "-crf", X264_CRF]
+
+# GPU (NVENC) encoding is used whenever it works. The FFmpeg on PATH may be
+# too new for the installed NVIDIA driver (FFmpeg 9 needs driver 610+, which
+# Pascal cards like the GTX 1060 never get), so FFMPEG_RENDER_PATH can point
+# at an older FFmpeg build used only for rendering.
+FFMPEG_RENDER = os.environ.get("FFMPEG_RENDER_PATH", "ffmpeg")
+NVENC_ARGS = [
+    "-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "24", "-b:v", "0",
+    "-pix_fmt", "yuv420p",
+]
+
+_nvenc_available: bool | None = None
+
+
+def nvenc_available() -> bool:
+    """Probes once whether FFMPEG_RENDER can actually open the NVENC encoder
+    (it fails on missing GPUs and on driver/FFmpeg version mismatches)."""
+    global _nvenc_available
+    if _nvenc_available is None:
+        command = [
+            FFMPEG_RENDER, "-hide_banner",
+            "-f", "lavfi", "-i", "color=size=256x256:duration=0.1",
+            "-c:v", "h264_nvenc", "-f", "null", "-",
+        ]
+        try:
+            _nvenc_available = subprocess.run(command, capture_output=True).returncode == 0
+        except FileNotFoundError:
+            _nvenc_available = False
+    return _nvenc_available
+
+
+def _run_encode(build_command: Callable[[str, list[str]], list[str]]) -> None:
+    """Runs build_command(ffmpeg_binary, video_codec_args) with NVENC when
+    available, retrying with software x264 if the NVENC attempt fails."""
+    attempts = [("ffmpeg", X264_ARGS)]
+    if nvenc_available():
+        attempts.insert(0, (FFMPEG_RENDER, NVENC_ARGS))
+
+    for index, (binary, codec_args) in enumerate(attempts):
+        try:
+            subprocess.run(build_command(binary, codec_args), check=True, capture_output=True, text=True)
+            return
+        except FileNotFoundError as exc:
+            raise FFmpegNotFoundError(
+                "ffmpeg was not found on PATH. Install FFmpeg and make sure it is on PATH."
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            if index == len(attempts) - 1:
+                raise RuntimeError(f"ffmpeg failed: {exc.stderr}") from exc
 
 
 def get_duration(video_path: str) -> float:
@@ -76,18 +127,18 @@ def render_video(
 
     if len(keep_segments) == 1:
         start, end = keep_segments[0]
-        command = [
-            "ffmpeg", "-y",
-            "-ss", str(start),
-            "-to", str(end),
-            "-i", input_path,
-            "-c:v", "libx264",
-            "-preset", X264_PRESET,
-            "-crf", X264_CRF,
-            *audio_codec_args,
-            "-movflags", "+faststart",
-            output_path,
-        ]
+
+        def build_command(ffmpeg: str, codec_args: list[str]) -> list[str]:
+            return [
+                ffmpeg, "-y",
+                "-ss", str(start),
+                "-to", str(end),
+                "-i", input_path,
+                *codec_args,
+                *audio_codec_args,
+                "-movflags", "+faststart",
+                output_path,
+            ]
     else:
         filter_parts = []
         video_inputs = ""
@@ -115,32 +166,22 @@ def render_video(
             concat_tail = f"concat=n={len(keep_segments)}:v=1:a=0[outv]"
 
         filter_complex = ";".join(filter_parts) + ";" + concat_inputs + concat_tail
+        audio_map = ["-map", "[outa]"] if audio else []
 
-        command = [
-            "ffmpeg", "-y",
-            "-i", input_path,
-            "-filter_complex", filter_complex,
-            "-map", "[outv]",
-        ]
-        if audio:
-            command += ["-map", "[outa]"]
-        command += [
-            "-c:v", "libx264",
-            "-preset", X264_PRESET,
-            "-crf", X264_CRF,
-            *audio_codec_args,
-            "-movflags", "+faststart",
-            output_path,
-        ]
+        def build_command(ffmpeg: str, codec_args: list[str]) -> list[str]:
+            return [
+                ffmpeg, "-y",
+                "-i", input_path,
+                "-filter_complex", filter_complex,
+                "-map", "[outv]",
+                *audio_map,
+                *codec_args,
+                *audio_codec_args,
+                "-movflags", "+faststart",
+                output_path,
+            ]
 
-    try:
-        subprocess.run(command, check=True, capture_output=True, text=True)
-    except FileNotFoundError as exc:
-        raise FFmpegNotFoundError(
-            "ffmpeg was not found on PATH. Install FFmpeg and make sure it is on PATH."
-        ) from exc
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"ffmpeg failed: {exc.stderr}") from exc
+    _run_encode(build_command)
 
 
 _MIX_SAMPLE_RATE = 44100
@@ -237,26 +278,18 @@ def render_video_with_audio(
 
     filter_complex = ";".join(filter_parts)
 
-    command = [
-        "ffmpeg", "-y",
-        *inputs,
-        "-filter_complex", filter_complex,
-        "-map", "[outv]",
-        "-map", "[outa]",
-        "-c:v", "libx264",
-        "-preset", X264_PRESET,
-        "-crf", X264_CRF,
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-movflags", "+faststart",
-        output_path,
-    ]
+    def build_command(ffmpeg: str, codec_args: list[str]) -> list[str]:
+        return [
+            ffmpeg, "-y",
+            *inputs,
+            "-filter_complex", filter_complex,
+            "-map", "[outv]",
+            "-map", "[outa]",
+            *codec_args,
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+            output_path,
+        ]
 
-    try:
-        subprocess.run(command, check=True, capture_output=True, text=True)
-    except FileNotFoundError as exc:
-        raise FFmpegNotFoundError(
-            "ffmpeg was not found on PATH. Install FFmpeg and make sure it is on PATH."
-        ) from exc
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"ffmpeg failed: {exc.stderr}") from exc
+    _run_encode(build_command)

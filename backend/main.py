@@ -29,6 +29,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 MEDIA_DIR = BASE_DIR / "media"
 UPLOAD_DIR = MEDIA_DIR / "uploads"
 OUTPUT_DIR = MEDIA_DIR / "outputs"
+# Downloaded videos + Whisper transcripts, keyed by YouTube video ID, so
+# pasting the same video again skips the download and transcription.
+# Layout: library/<video_id>/video.<ext> and library/<video_id>/<language>_<model>.vtt
+LIBRARY_DIR = MEDIA_DIR / "library"
 FRONTEND_DIR = BASE_DIR / "frontend"
 
 # Fixed, predictable location mirroring the current video+VTT — so Claude
@@ -41,6 +45,7 @@ CUTS_PATH = WORKSPACE_DIR / "cuts.md"
 CHUNK_AUDIO_DIR = WORKSPACE_DIR / "chunk_audio"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -87,24 +92,45 @@ def _run_ingest(project_id: str, youtube_url: str, language: str) -> None:
         project["phase_message"] = message
         project["progress"] = progress
 
+    video_id = youtube_ingest.video_id_from_url(youtube_url)
+    # Unrecognized URLs still work, they just don't get cached.
+    library_dir = LIBRARY_DIR / video_id if video_id else project_dir
+    transcript_cache = library_dir / f"{language}_{youtube_ingest.DEFAULT_WHISPER_MODEL}.vtt"
+
     try:
-        set_phase("downloading", "Downloading…", 0.0)
-        video_path = youtube_ingest.download_video(
-            youtube_url, project_dir, on_progress=lambda frac, msg: set_phase("downloading", msg, frac)
-        )
+        cached_videos = sorted(library_dir.glob("video.*")) if video_id else []
+        if cached_videos:
+            video_path = cached_videos[0]
+            project["video_cached"] = True
+        else:
+            set_phase("downloading", "Downloading…", 0.0)
+            video_path = youtube_ingest.download_video(
+                youtube_url, project_dir, on_progress=lambda frac, msg: set_phase("downloading", msg, frac)
+            )
+            # Only a finished download enters the library — a failed one can
+            # leave yt-dlp's .part/format files behind, which must not look cached.
+            if video_id:
+                library_dir.mkdir(parents=True, exist_ok=True)
+                video_path = Path(shutil.move(str(video_path), library_dir / f"video{video_path.suffix}"))
 
         duration = get_duration(str(video_path))
         project["video_path"] = str(video_path)
         project["duration"] = duration
 
-        set_phase("extracting_audio", "Extracting audio for transcription…", 0.0)
-        audio_path = youtube_ingest.extract_audio(video_path, project_dir)
+        if video_id and transcript_cache.exists():
+            vtt_text = transcript_cache.read_text(encoding="utf-8")
+            project["transcript_cached"] = True
+        else:
+            set_phase("extracting_audio", "Extracting audio for transcription…", 0.0)
+            audio_path = youtube_ingest.extract_audio(video_path, project_dir)
 
-        vtt_text = youtube_ingest.transcribe(
-            audio_path,
-            language=language,
-            on_progress=lambda frac, msg: set_phase("transcribing", msg, frac),
-        )
+            vtt_text = youtube_ingest.transcribe(
+                audio_path,
+                language=language,
+                on_progress=lambda frac, msg: set_phase("transcribing", msg, frac),
+            )
+            if video_id:
+                transcript_cache.write_text(vtt_text, encoding="utf-8")
 
         project["vtt_text"] = vtt_text
         (project_dir / "subtitles.vtt").write_text(vtt_text, encoding="utf-8")
@@ -753,6 +779,8 @@ async def status(project_id: str):
 
     if project["status"] == "done" and project.get("duration") is not None:
         response["duration"] = project["duration"]
+        response["video_cached"] = bool(project.get("video_cached"))
+        response["transcript_cached"] = bool(project.get("transcript_cached"))
 
     if project["status"] == "error":
         response["error"] = project.get("error")

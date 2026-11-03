@@ -90,3 +90,18 @@ python run.py
 ```
 
 Opens automatically at `http://127.0.0.1:8000`.
+
+## GPU video encoding (NVENC, optional)
+
+Rendering uses the NVIDIA hardware encoder automatically when it works, and falls back
+to CPU x264 otherwise. Recent FFmpeg builds need a recent NVIDIA driver for NVENC
+(FFmpeg 9 needs driver 610+, FFmpeg 7.1 needs 570+), which older cards such as the
+GTX 10-series may not get. In that case download an older build, e.g. gyan's
+[FFmpeg 7.0.2 essentials](https://github.com/GyanD/codexffmpeg/releases/tag/7.0.2),
+and point the app at it for rendering only:
+
+```powershell
+setx FFMPEG_RENDER_PATH "D:\Tools\ffmpeg-7.0\bin\ffmpeg.exe"
+```
+
+(Open a new terminal afterwards.) The FFmpeg on PATH is still used for everything else.

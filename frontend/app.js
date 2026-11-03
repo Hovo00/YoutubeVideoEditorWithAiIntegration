@@ -125,7 +125,13 @@ function pollIngestStatus() {
       state.duration = data.duration;
       saveSession();
 
-      statusEl.textContent = `Transcribed in ${elapsed}s.`;
+      if (data.video_cached && data.transcript_cached) {
+        statusEl.textContent = "Loaded from library (already downloaded and transcribed).";
+      } else if (data.video_cached) {
+        statusEl.textContent = `Video loaded from library, transcribed in ${elapsed}s.`;
+      } else {
+        statusEl.textContent = `Transcribed in ${elapsed}s.`;
+      }
 
       const transcriptResponse = await fetch(`/api/project/${state.projectId}/transcript`);
       if (!transcriptResponse.ok) {

@@ -96,6 +96,19 @@ _YTDLP_ERROR_PATTERNS = [
 ]
 
 
+_VIDEO_ID_RE = re.compile(
+    r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})"
+)
+
+
+def video_id_from_url(url: str) -> str | None:
+    """The 11-character YouTube video ID, so the same video is recognized
+    regardless of URL form or extra params (&t=, &list=, youtu.be/...).
+    None for anything not recognized as a YouTube link."""
+    match = _VIDEO_ID_RE.search(url)
+    return match.group(1) if match else None
+
+
 def _classify_ytdlp_failure(output: str) -> str:
     for pattern, message in _YTDLP_ERROR_PATTERNS:
         if pattern.search(output):
@@ -116,6 +129,10 @@ def download_video(url: str, dest_dir: Path, on_progress: ProgressCallback) -> P
     command = [
         "yt-dlp",
         "-f", "bv*+ba/b",
+        # Cap at 1080p and prefer VP9/H.264 over AV1: 4K AV1 can't be
+        # decoded by older GPUs (e.g. GTX 10-series), so every render had
+        # to decode 4K on the CPU — the main reason renders were slow.
+        "-S", "res:1080,vcodec:vp9",
         "--merge-output-format", "mp4",
         "--newline",
         "-o", output_template,
@@ -274,4 +291,16 @@ def transcribe(
             "Whisper finished but did not produce a transcript file."
         )
 
-    return vtt_path.read_text(encoding="utf-8")
+    return _add_missing_hours(vtt_path.read_text(encoding="utf-8"))
+
+
+# Whisper's VTT writer omits the hours field whenever it's zero ("01:23.456"),
+# but the rest of the app (parser, AI instructions) expects HH:MM:SS.mmm.
+_SHORT_TIMESTAMP_RE = re.compile(r"(?<![\d:])(\d{2}:\d{2}\.\d{3})(?![\d:])")
+
+
+def _add_missing_hours(vtt_text: str) -> str:
+    return "\n".join(
+        _SHORT_TIMESTAMP_RE.sub(r"00:\1", line) if "-->" in line else line
+        for line in vtt_text.split("\n")
+    )

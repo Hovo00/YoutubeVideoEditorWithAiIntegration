@@ -5,6 +5,7 @@ __pycache__/
 
 media/uploads/*
 media/outputs/*
+media/library/
 !media/uploads/.gitkeep
 !media/outputs/.gitkeep
 

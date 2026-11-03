@@ -79,6 +79,20 @@ input[type="text"] {
   font-size: 1em;
 }
 
+select {
+  background: #111;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 11px 12px;
+  font-size: 1em;
+}
+
+#editModeSelect,
+#audioModeSelect {
+  flex: 1;
+}
+
 details.manual-fallback {
   margin-top: 16px;
   color: #999;

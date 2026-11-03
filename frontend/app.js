@@ -3,9 +3,10 @@ const state = {
   duration: 0,
   cuts: [], // {start, end, text, reason, enabled}
   pollTimer: null,
+  cues: [], // {start, end, text} — raw Whisper cues, Mode 1
   outlineSections: [], // {level, title, start, end, body}
-  chunks: [], // {text, start, end, slot_duration}
-  ttsVoices: [], // {name, label}
+  chunks: [], // {text, start, end, slot_duration, title}
+  ttsVoices: [], // {name, label, provider}
 };
 
 function formatTime(seconds) {
@@ -24,7 +25,7 @@ function showStep(id) {
   document.getElementById(id).style.display = "block";
 }
 
-// --- Session persistence (survive a page reload without re-uploading, ----
+// --- Session persistence (survive a page reload without re-ingesting, ----
 // which would otherwise wipe workspace/outline.md and cuts.md) -----------
 
 const SESSION_KEY = "videoeditory_session";
@@ -49,58 +50,103 @@ function restoreSession() {
   if (!saved || !saved.projectId) return;
 
   state.projectId = saved.projectId;
-  state.duration = saved.duration;
 
-  document.getElementById("preview").src = "/api/workspace/video";
-  document.getElementById("videoInfo").textContent =
-    `Restored previous session — duration ${formatTime(saved.duration)}`;
-
-  showStep("stepOutline");
-  showStep("step2");
+  if (saved.duration) {
+    state.duration = saved.duration;
+    const preview = document.getElementById("preview");
+    preview.src = "/api/workspace/video";
+    preview.style.display = "block";
+    document.getElementById("videoInfo").textContent =
+      `Restored previous session — duration ${formatTime(saved.duration)}`;
+    showStep("stepEditMode");
+    showEditMode(document.getElementById("editModeSelect").value);
+  } else {
+    // Ingestion was still in progress when the page was last open — resume
+    // polling rather than assuming a workspace video already exists.
+    document.getElementById("ingestStatus").textContent = "Resuming previous session...";
+    pollIngestStatus();
+  }
 }
 
-// --- Step 1: load video -----------------------------------------------
+// --- Step 1: YouTube ingestion ------------------------------------------
 
-document.getElementById("loadBtn").addEventListener("click", async () => {
-  const input = document.getElementById("videoInput");
-  const file = input.files[0];
-  if (!file) {
-    alert("Pick a video file first.");
+document.getElementById("ingestBtn").addEventListener("click", async () => {
+  const urlInput = document.getElementById("youtubeUrlInput");
+  const url = urlInput.value.trim();
+  if (!url) {
+    alert("Paste a YouTube URL first.");
     return;
   }
 
-  const preview = document.getElementById("preview");
-  preview.src = URL.createObjectURL(file);
-
-  const info = document.getElementById("videoInfo");
-  info.textContent = "Uploading...";
+  const language = document.getElementById("languageSelect").value;
+  const statusEl = document.getElementById("ingestStatus");
+  statusEl.textContent = "Starting...";
 
   const formData = new FormData();
-  formData.append("video", file);
+  formData.append("youtube_url", url);
+  formData.append("language", language);
 
-  const vttFile = document.getElementById("vttInput").files[0];
-  if (vttFile) {
-    formData.append("subtitles", vttFile);
-  }
-
-  const response = await fetch("/api/upload", { method: "POST", body: formData });
+  const response = await fetch("/api/ingest", { method: "POST", body: formData });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    info.textContent = `Upload failed: ${err.detail || response.statusText}`;
+    statusEl.textContent = `Could not start: ${err.detail || response.statusText}`;
     return;
   }
 
   const data = await response.json();
   state.projectId = data.project_id;
-  state.duration = data.duration;
+  state.duration = 0;
   saveSession();
 
-  info.textContent = `Loaded "${data.filename}" — duration ${formatTime(data.duration)}`;
-
-  showStep("stepOutline");
-  showStep("step2");
+  pollIngestStatus();
 });
+
+function pollIngestStatus() {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+
+  const statusEl = document.getElementById("ingestStatus");
+  const startedAt = Date.now();
+
+  state.pollTimer = setInterval(async () => {
+    const response = await fetch(`/api/status/${state.projectId}`);
+    if (!response.ok) {
+      clearInterval(state.pollTimer);
+      statusEl.textContent = "Lost track of this project — paste the URL again.";
+      return;
+    }
+    const data = await response.json();
+    const elapsed = Math.round((Date.now() - startedAt) / 1000);
+
+    if (data.status === "processing") {
+      statusEl.textContent = `${data.phase_message || "Working..."} (${elapsed}s elapsed)`;
+    } else if (data.status === "done") {
+      clearInterval(state.pollTimer);
+      state.duration = data.duration;
+      saveSession();
+
+      statusEl.textContent = `Transcribed in ${elapsed}s.`;
+
+      const transcriptResponse = await fetch(`/api/project/${state.projectId}/transcript`);
+      if (!transcriptResponse.ok) {
+        statusEl.textContent = "Transcription finished but the transcript could not be loaded.";
+        return;
+      }
+
+      const preview = document.getElementById("preview");
+      preview.src = "/api/workspace/video";
+      preview.style.display = "block";
+      document.getElementById("videoInfo").textContent =
+        `Duration ${formatTime(data.duration)}`;
+
+      showStep("stepEditMode");
+      showEditMode(document.getElementById("editModeSelect").value);
+    } else if (data.status === "error") {
+      clearInterval(state.pollTimer);
+      statusEl.textContent = `Failed: ${data.error}`;
+    }
+  }, 1500);
+}
 
 // --- Copy-paste prompts for Claude Desktop / claude terminal --------------
 
@@ -118,28 +164,139 @@ async function copyToClipboard(text, button) {
   }, 1500);
 }
 
-const STEP1_PROMPT =
-  "Read AI_EDITING_INSTRUCTIONS.md in this project folder, then do Step 1 " +
-  "(generate the outline) exactly as it describes there.";
+const MODE2_PROMPT =
+  "Read AI_EDITING_INSTRUCTIONS.md in this project folder, then do Mode 2 " +
+  "(build the corrected outline) exactly as it describes there.";
 
-document.getElementById("copyStep1Btn").addEventListener("click", (e) => {
-  copyToClipboard(STEP1_PROMPT, e.currentTarget);
+document.getElementById("copyOutlineBtn").addEventListener("click", (e) => {
+  copyToClipboard(MODE2_PROMPT, e.currentTarget);
 });
 
-document.getElementById("copyStep2Btn").addEventListener("click", (e) => {
-  const instruction = document.getElementById("instructionInput").value.trim();
+document.getElementById("copyAutonomousBtn").addEventListener("click", (e) => {
+  const instruction = document.getElementById("autonomousInstructionInput").value.trim();
   if (!instruction) {
-    alert("Type what you want changed first.");
+    alert("Describe the result you want first.");
     return;
   }
   const prompt =
     "Read AI_EDITING_INSTRUCTIONS.md in this project folder if you haven't " +
-    "already this conversation, then do Step 2 for this instruction: " +
+    "already this conversation, then do Mode 3 for this instruction: " +
     instruction;
   copyToClipboard(prompt, e.currentTarget);
 });
 
-// --- Step 2 (outline): load workspace/outline.md ---------------------------
+// --- Edit-mode combobox ---------------------------------------------------
+
+const EDIT_MODE_BLOCKS = {
+  manual: "editModeManual",
+  outline: "editModeOutline",
+  autonomous: "editModeAutonomous",
+};
+
+function showEditMode(mode) {
+  for (const [key, id] of Object.entries(EDIT_MODE_BLOCKS)) {
+    document.getElementById(id).style.display = key === mode ? "block" : "none";
+  }
+  if (mode === "manual" && state.projectId && state.cues.length === 0) {
+    loadCues();
+  }
+}
+
+document.getElementById("editModeSelect").addEventListener("change", (e) => {
+  showEditMode(e.target.value);
+});
+showEditMode(document.getElementById("editModeSelect").value);
+
+// --- Edit mode 1 (manual): raw cue checkboxes -----------------------------
+// The transcript is already sitting in the project the moment ingestion
+// finishes (unlike the outline/cuts-file modes, which depend on an external
+// Claude step run on your own schedule) — so this loads automatically as
+// soon as Manual mode is shown, no "Load" button needed.
+
+async function loadCues() {
+  if (!state.projectId) return;
+
+  const statusEl = document.getElementById("cuesStatus");
+  const viewEl = document.getElementById("cuesView");
+  statusEl.textContent = "Loading...";
+  viewEl.innerHTML = "";
+
+  const response = await fetch(`/api/project/${state.projectId}/cues`);
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    statusEl.textContent = err.detail || response.statusText;
+    return;
+  }
+
+  const data = await response.json();
+  state.cues = data.cues;
+  statusEl.textContent = `${data.cues.length} cue(s).`;
+
+  const preview = document.getElementById("preview");
+
+  data.cues.forEach((cue, index) => {
+    const row = document.createElement("div");
+    row.className = "outline-section";
+
+    const head = document.createElement("div");
+    head.className = "outline-head";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "cue-checkbox";
+    checkbox.dataset.index = String(index);
+
+    const seekLink = document.createElement("a");
+    seekLink.href = "#";
+    seekLink.className = "outline-time";
+    seekLink.textContent = `${formatTime(cue.start)} - ${formatTime(cue.end)}`;
+    seekLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      preview.currentTime = cue.start;
+      preview.play();
+    });
+
+    const text = document.createElement("span");
+    text.className = "outline-title";
+    text.textContent = cue.text;
+
+    head.append(checkbox, seekLink, text);
+    row.append(head);
+    viewEl.appendChild(row);
+  });
+}
+
+document.getElementById("cutSelectedCuesBtn").addEventListener("click", async () => {
+  if (!state.projectId) {
+    alert("Paste and transcribe a video first.");
+    return;
+  }
+
+  const checked = Array.from(document.querySelectorAll(".cue-checkbox:checked"));
+  if (checked.length === 0) {
+    alert("Check at least one cue to remove first.");
+    return;
+  }
+
+  const cues = checked.map((cb) => state.cues[Number(cb.dataset.index)]);
+
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+  formData.append("cues_json", JSON.stringify(cues));
+
+  const response = await fetch("/api/cues-cut", { method: "POST", body: formData });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    alert(`Could not build cuts from selection: ${err.detail || response.statusText}`);
+    return;
+  }
+
+  applyCutsResponse(await response.json());
+});
+
+// --- Edit mode 2 (AI outline): load workspace/outline.md ------------------
 
 document.getElementById("loadOutlineBtn").addEventListener("click", async () => {
   const statusEl = document.getElementById("outlineStatus");
@@ -200,9 +357,9 @@ document.getElementById("loadOutlineBtn").addEventListener("click", async () => 
   });
 });
 
-document.getElementById("cutSelectedBtn").addEventListener("click", async () => {
+document.getElementById("cutSelectedSectionsBtn").addEventListener("click", async () => {
   if (!state.projectId) {
-    alert("Load a video first.");
+    alert("Paste and transcribe a video first.");
     return;
   }
 
@@ -229,21 +386,11 @@ document.getElementById("cutSelectedBtn").addEventListener("click", async () => 
   applyCutsResponse(await response.json());
 });
 
-// --- Step 2: generate or parse cuts --------------------------------------
-
-function applyCutsResponse(data) {
-  state.cuts = data.cuts.map((c) => ({ ...c, enabled: true }));
-  renderWarnings(data.warnings);
-  renderSummary(data);
-  renderCutsTable();
-  document.getElementById("refineBox").style.display = "flex";
-  showStep("step3");
-  showStep("step4");
-}
+// --- Edit mode 3 (AI autonomous): load workspace/cuts.md, or paste --------
 
 document.getElementById("parseBtn").addEventListener("click", async () => {
   if (!state.projectId) {
-    alert("Load a video first.");
+    alert("Paste and transcribe a video first.");
     return;
   }
 
@@ -268,52 +415,9 @@ document.getElementById("parseBtn").addEventListener("click", async () => {
   applyCutsResponse(await response.json());
 });
 
-async function requestAiEdit(instruction, button, statusEl) {
-  if (!state.projectId) {
-    alert("Load a video first.");
-    return;
-  }
-  if (!instruction.trim()) {
-    alert("Type an instruction first.");
-    return;
-  }
-
-  button.disabled = true;
-  if (statusEl) statusEl.textContent = "Asking Claude... this can take a little while for long transcripts.";
-
-  const formData = new FormData();
-  formData.append("project_id", state.projectId);
-  formData.append("instruction", instruction);
-
-  try {
-    const response = await fetch("/api/ai-edit", { method: "POST", body: formData });
-
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      const message = `Claude edit failed: ${err.detail || response.statusText}`;
-      if (statusEl) statusEl.textContent = message;
-      else alert(message);
-      return;
-    }
-
-    const data = await response.json();
-    if (statusEl) statusEl.textContent = "";
-    applyCutsResponse(data);
-  } finally {
-    button.disabled = false;
-  }
-}
-
-document.getElementById("generateBtn").addEventListener("click", () => {
-  const instruction = document.getElementById("instructionInput").value;
-  const button = document.getElementById("generateBtn");
-  const statusEl = document.getElementById("aiEditStatus");
-  requestAiEdit(instruction, button, statusEl);
-});
-
 document.getElementById("loadCutsFileBtn").addEventListener("click", async () => {
   if (!state.projectId) {
-    alert("Load a video first.");
+    alert("Paste and transcribe a video first.");
     return;
   }
 
@@ -328,13 +432,22 @@ document.getElementById("loadCutsFileBtn").addEventListener("click", async () =>
   applyCutsResponse(await response.json());
 });
 
-document.getElementById("refineBtn").addEventListener("click", () => {
-  const input = document.getElementById("refineInput");
-  const button = document.getElementById("refineBtn");
-  requestAiEdit(input.value, button, null).then(() => {
-    input.value = "";
-  });
-});
+// --- Cuts review (shared by all 3 edit modes) -----------------------------
+
+function applyCutsResponse(data) {
+  state.cuts = data.cuts.map((c) => ({ ...c, enabled: true }));
+  renderWarnings(data.warnings);
+  renderSummary(data);
+  renderCutsTable();
+  showStep("step3");
+  showStep("stepAudioMode");
+
+  document.getElementById("renderStatus").textContent = "";
+  document.getElementById("downloadLink").style.display = "none";
+  document.getElementById("resultPreview").style.display = "none";
+
+  showAudioMode(document.getElementById("audioModeSelect").value);
+}
 
 function renderWarnings(warnings) {
   const el = document.getElementById("warnings");
@@ -403,11 +516,125 @@ function renderCutsTable() {
   });
 }
 
-// --- Voice-over text chunks -------------------------------------------
+// --- Audio-mode combobox ---------------------------------------------------
+
+const AUDIO_MODE_BLOCKS = {
+  original: "audioModeOriginal",
+  "auto-tts": "audioModeAuto",
+  "manual-tts": "audioModeManual",
+};
+
+function showAudioMode(mode) {
+  for (const [key, id] of Object.entries(AUDIO_MODE_BLOCKS)) {
+    document.getElementById(id).style.display = key === mode ? "block" : "none";
+  }
+  if (mode === "auto-tts") {
+    ensureTtsVoicesLoaded().then(populateAutoTtsVoiceSelect);
+  }
+}
+
+document.getElementById("audioModeSelect").addEventListener("change", (e) => {
+  showAudioMode(e.target.value);
+});
+
+async function ensureTtsVoicesLoaded() {
+  if (state.ttsVoices.length === 0) {
+    const response = await fetch("/api/tts/voices");
+    if (response.ok) {
+      state.ttsVoices = (await response.json()).voices;
+    }
+  }
+  if (state.ttsVoices.some((v) => v.provider === "azure")) {
+    refreshAzureUsage();
+  }
+  return state.ttsVoices;
+}
+
+function populateAutoTtsVoiceSelect() {
+  const select = document.getElementById("autoTtsVoiceSelect");
+  if (select.options.length > 0) return;
+  for (const voice of state.ttsVoices) {
+    const option = document.createElement("option");
+    option.value = voice.name;
+    option.textContent = `${voice.label} (${voice.provider})`;
+    select.appendChild(option);
+  }
+}
+
+// --- Audio option 1: original audio (plain render) ------------------------
+
+document.getElementById("renderBtn").addEventListener("click", async () => {
+  const enabledCuts = state.cuts.filter((c) => c.enabled);
+
+  if (enabledCuts.length === 0) {
+    alert("No cuts are enabled — nothing to remove. Enable at least one cut, or there's nothing to render.");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+  formData.append(
+    "cuts_json",
+    JSON.stringify(enabledCuts.map((c) => ({ start: c.start, end: c.end })))
+  );
+
+  const statusEl = document.getElementById("renderStatus");
+  statusEl.textContent = "Starting render...";
+
+  const response = await fetch("/api/render", { method: "POST", body: formData });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    statusEl.textContent = `Render failed to start: ${err.detail || response.statusText}`;
+    return;
+  }
+
+  pollRenderStatus();
+});
+
+// --- Audio option 2: automatic TTS ----------------------------------------
+
+document.getElementById("autoTtsBtn").addEventListener("click", async () => {
+  const enabledCuts = state.cuts.filter((c) => c.enabled);
+
+  if (enabledCuts.length === 0) {
+    alert("No cuts are enabled — nothing to remove. Enable at least one cut, or there's nothing to render.");
+    return;
+  }
+
+  const voice = document.getElementById("autoTtsVoiceSelect").value;
+  if (!voice) {
+    alert("No TTS voices are available — install a Piper voice model (see the setup docs).");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+  formData.append(
+    "cuts_json",
+    JSON.stringify(enabledCuts.map((c) => ({ start: c.start, end: c.end })))
+  );
+  formData.append("voice", voice);
+
+  const statusEl = document.getElementById("renderStatus");
+  statusEl.textContent = "Starting automatic voice-over...";
+
+  const response = await fetch("/api/auto-tts", { method: "POST", body: formData });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    statusEl.textContent = `Could not start: ${err.detail || response.statusText}`;
+    return;
+  }
+
+  pollRenderStatus();
+});
+
+// --- Audio option 3: manual TTS (voice-over text chunks) -------------------
 
 document.getElementById("generateChunksBtn").addEventListener("click", async () => {
   if (!state.projectId) {
-    alert("Load a video first.");
+    alert("Paste and transcribe a video first.");
     return;
   }
 
@@ -435,22 +662,12 @@ document.getElementById("generateChunksBtn").addEventListener("click", async () 
   const modeNote =
     data.chunking_mode === "outline"
       ? "One chunk per outline paragraph/sub-paragraph."
-      : "No outline found — using ~500-character chunks instead. Run Step 1 with Claude first for paragraph-based chunks.";
+      : "No outline found — using ~500-character chunks instead.";
   statusEl.textContent =
     `${data.chunks.length} chunk(s) — ${data.kept_cue_count} of ${data.total_cue_count} cues kept. ${modeNote} ` +
     "Toggling cuts above? Click this button again to refresh the chunks.";
 
-  if (state.ttsVoices.length === 0) {
-    const voicesResponse = await fetch("/api/tts/voices");
-    if (voicesResponse.ok) {
-      state.ttsVoices = (await voicesResponse.json()).voices;
-    }
-  }
-
-  if (state.ttsVoices.some((v) => v.provider === "azure")) {
-    refreshAzureUsage();
-  }
-
+  await ensureTtsVoicesLoaded();
   renderChunks();
 });
 
@@ -641,37 +858,6 @@ function renderChunks() {
   });
 }
 
-// --- Step 3: render -------------------------------------------------------
-
-document.getElementById("renderBtn").addEventListener("click", async () => {
-  const enabledCuts = state.cuts.filter((c) => c.enabled);
-
-  if (enabledCuts.length === 0) {
-    alert("No cuts are enabled — nothing to remove. Enable at least one cut, or there's nothing to render.");
-    return;
-  }
-
-  const formData = new FormData();
-  formData.append("project_id", state.projectId);
-  formData.append(
-    "cuts_json",
-    JSON.stringify(enabledCuts.map((c) => ({ start: c.start, end: c.end })))
-  );
-
-  const statusEl = document.getElementById("renderStatus");
-  statusEl.textContent = "Starting render...";
-
-  const response = await fetch("/api/render", { method: "POST", body: formData });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    statusEl.textContent = `Render failed to start: ${err.detail || response.statusText}`;
-    return;
-  }
-
-  pollStatus();
-});
-
 document.getElementById("renderWithAudioBtn").addEventListener("click", async () => {
   const enabledCuts = state.cuts.filter((c) => c.enabled);
 
@@ -712,10 +898,12 @@ document.getElementById("renderWithAudioBtn").addEventListener("click", async ()
     return;
   }
 
-  pollStatus();
+  pollRenderStatus();
 });
 
-function pollStatus() {
+// --- Shared render/voice-over status polling -------------------------------
+
+function pollRenderStatus() {
   if (state.pollTimer) clearInterval(state.pollTimer);
 
   const statusEl = document.getElementById("renderStatus");
@@ -727,9 +915,7 @@ function pollStatus() {
 
     const elapsed = Math.round((Date.now() - startedAt) / 1000);
 
-    if (data.status === "rendering") {
-      statusEl.textContent = `Rendering... (${elapsed}s elapsed, re-encoding can take a while for long videos)`;
-    } else if (data.status === "done") {
+    if (data.status === "done") {
       clearInterval(state.pollTimer);
       statusEl.textContent = `Done in ${elapsed}s.`;
 
@@ -742,7 +928,10 @@ function pollStatus() {
       preview.style.display = "block";
     } else if (data.status === "error") {
       clearInterval(state.pollTimer);
-      statusEl.textContent = `Render failed: ${data.error}`;
+      statusEl.textContent = `Failed: ${data.error}`;
+    } else {
+      const message = data.phase_message || "Rendering...";
+      statusEl.textContent = `${message} (${elapsed}s elapsed, re-encoding can take a while for long videos)`;
     }
   }, 1500);
 }

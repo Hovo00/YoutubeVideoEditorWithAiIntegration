@@ -16,98 +16,125 @@
     </header>
 
     <section class="step" id="step1">
-      <h2>1. Load video + subtitles</h2>
+      <h2>1. Paste a YouTube link</h2>
+      <p class="muted">
+        The app downloads the video and transcribes it locally with Whisper — no manual
+        caption download/upload needed. Pick the language that's actually spoken in the
+        video for best accuracy.
+      </p>
       <div class="row">
-        <input type="file" id="videoInput" accept="video/*" />
-        <input type="file" id="vttInput" accept=".vtt" />
-        <button id="loadBtn">Load</button>
+        <input type="text" id="youtubeUrlInput" placeholder="https://youtu.be/..." />
+        <select id="languageSelect">
+          <option value="English">English</option>
+          <option value="Russian">Russian</option>
+          <option value="Armenian">Armenian</option>
+          <option value="Spanish">Spanish</option>
+          <option value="French">French</option>
+          <option value="German">German</option>
+          <option value="Italian">Italian</option>
+          <option value="Portuguese">Portuguese</option>
+          <option value="Ukrainian">Ukrainian</option>
+          <option value="Turkish">Turkish</option>
+          <option value="Arabic">Arabic</option>
+          <option value="Hindi">Hindi</option>
+          <option value="Chinese">Chinese</option>
+          <option value="Japanese">Japanese</option>
+          <option value="Korean">Korean</option>
+        </select>
+        <button id="ingestBtn">Go</button>
       </div>
-      <p class="muted">The .vtt is optional — only needed for the "Generate edit with Claude" flow below. Skip it if you'll paste an AI reply manually instead.</p>
-      <video id="preview" class="video" controls></video>
+      <div id="ingestStatus" class="muted"></div>
+      <video id="preview" class="video" controls style="display:none"></video>
       <div id="videoInfo" class="muted"></div>
     </section>
 
-    <section class="step" id="stepOutline" style="display:none">
-      <h2>2. Generate a readable outline <span class="muted">(optional)</span></h2>
-      <p class="muted">
-        In Claude Desktop (or a <code>claude</code> terminal), attach/<code>cd</code> into
-        this project folder. Click "Copy message for Claude" below, paste it as your
-        first message, and send it — the message points Claude at
-        <code>AI_EDITING_INSTRUCTIONS.md</code> so it reads the rules before doing
-        anything. It'll read <code>workspace/subtitles.vtt</code> and write
-        <code>workspace/outline.md</code>: the transcript broken into topic-based
-        paragraphs instead of raw cues.
-      </p>
+    <section class="step" id="stepEditMode" style="display:none">
+      <h2>2. Choose how to edit</h2>
       <div class="row">
-        <button id="copyStep1Btn">Copy message for Claude</button>
-        <button id="loadOutlineBtn">Load outline</button>
+        <select id="editModeSelect">
+          <option value="manual">Manual — delete parts yourself, no AI</option>
+          <option value="outline">AI outline — Claude structures + corrects, you pick sections to remove</option>
+          <option value="autonomous">AI autonomous — Claude decides what to cut from your instruction</option>
+        </select>
       </div>
-      <div id="outlineStatus" class="muted"></div>
-      <p class="muted">
-        Or skip Claude entirely for simple cuts: check the box on any paragraph or
-        sub-paragraph below to mark it for removal, then click "Cut selected sections" —
-        no AI involved, the app uses the outline's own timestamps.
-      </p>
-      <div id="outlineView"></div>
-      <div class="row">
-        <button id="cutSelectedBtn">Cut selected sections</button>
-      </div>
-    </section>
 
-    <section class="step" id="step2" style="display:none">
-      <h2>3. Describe the edit</h2>
-
-      <div id="aiEditBox">
+      <div id="editModeManual" style="display:none">
         <p class="muted">
-          Type the edit you want below. Either click "Generate edit with Claude" to send it
-          through this app automatically, or click "Copy message for Claude" and paste it into
-          Claude Desktop/terminal yourself — that message also points Claude at
-          <code>AI_EDITING_INSTRUCTIONS.md</code> so it knows the rules and writes
-          <code>workspace/cuts.md</code> for you.
+          Every cue Whisper produced, with its exact timestamp. Check the ones you want
+          removed, then cut — no AI involved.
+        </p>
+        <div id="cuesStatus" class="muted"></div>
+        <div id="cuesView"></div>
+        <div class="row">
+          <button id="cutSelectedCuesBtn">Cut selected cues</button>
+        </div>
+      </div>
+
+      <div id="editModeOutline" style="display:none">
+        <p class="muted">
+          In Claude Desktop (or a <code>claude</code> terminal), attach/<code>cd</code> into
+          this project folder. Click "Copy message for Claude" below, paste it as your
+          first message, and send it — the message points Claude at
+          <code>AI_EDITING_INSTRUCTIONS.md</code> so it reads the rules before doing
+          anything. It'll read <code>workspace/subtitles.vtt</code> and write
+          <code>workspace/outline.md</code>: the transcript broken into topic-based
+          paragraphs with titles, correcting Whisper's transcription mistakes along the way.
         </p>
         <div class="row">
-          <input type="text" id="instructionInput" placeholder="e.g. make this about 15 minutes, keep the main chronology" />
-          <button id="generateBtn">Generate edit with Claude</button>
+          <button id="copyOutlineBtn">Copy message for Claude</button>
+          <button id="loadOutlineBtn">Load outline</button>
         </div>
-        <div class="row">
-          <button id="copyStep2Btn">Copy message for Claude</button>
-        </div>
-        <div id="aiEditStatus" class="muted"></div>
-      </div>
-
-      <div class="row">
-        <button id="loadCutsFileBtn">Load cuts from workspace/cuts.md</button>
-      </div>
-      <p class="muted">
-        If you gave Claude an editing instruction in Claude Desktop/terminal (Step 2 in
-        <code>AI_EDITING_INSTRUCTIONS.md</code>), it should have written
-        <code>workspace/cuts.md</code> directly — click above to load it, no copy-paste needed.
-      </p>
-
-      <details class="manual-fallback">
-        <summary>Or paste a reply from another AI manually</summary>
+        <div id="outlineStatus" class="muted"></div>
         <p class="muted">
-          Paste the full structured reply you got back from ChatGPT (or another AI)
-          after giving it <code>AI_EDITING_INSTRUCTIONS.md</code> plus your instruction
-          and transcript — including its <code>## REMOVED</code> section.
+          Each paragraph/sub-paragraph below shows Claude's (possibly corrected) transcript
+          text for that span — check the box on any paragraph or sub-paragraph to mark it
+          for removal, then click "Cut selected sections".
         </p>
-        <textarea id="aiResponse" rows="14" placeholder="## REMOVED
-
-00:03:35.497 --> 00:03:39.040 | &quot;[музыка]&quot; | Music-only cue
-
-## EDITED_TRANSCRIPT
-...
-"></textarea>
+        <div id="outlineView"></div>
         <div class="row">
-          <button id="parseBtn">Parse cuts</button>
+          <button id="cutSelectedSectionsBtn">Cut selected sections</button>
         </div>
-      </details>
+      </div>
+
+      <div id="editModeAutonomous" style="display:none">
+        <p class="muted">
+          Describe the overall result you want — e.g. "this is 40 minutes, trim it to
+          about 15, keep only the important information." Claude decides what to remove.
+          Click "Copy message for Claude" and paste it into Claude Desktop/terminal; it
+          writes <code>workspace/cuts.md</code> for you.
+        </p>
+        <div class="row">
+          <input type="text" id="autonomousInstructionInput" placeholder="e.g. trim this to about 15 minutes, keep only the important information" />
+          <button id="copyAutonomousBtn">Copy message for Claude</button>
+        </div>
+        <div class="row">
+          <button id="loadCutsFileBtn">Load cuts from workspace/cuts.md</button>
+        </div>
+
+        <details class="manual-fallback">
+          <summary>Or paste a reply from another AI manually</summary>
+          <p class="muted">
+            Paste the full structured reply you got back from ChatGPT (or another AI)
+            after giving it <code>AI_EDITING_INSTRUCTIONS.md</code> plus your instruction
+            and transcript — including its <code>## REMOVED</code> section.
+          </p>
+          <textarea id="aiResponse" rows="14" placeholder="## REMOVED
+
+00:03:35.497 --> 00:03:39.040 | &quot;[music]&quot; | Music-only cue
+
+## CHANGE_LOG
+..."></textarea>
+          <div class="row">
+            <button id="parseBtn">Parse cuts</button>
+          </div>
+        </details>
+      </div>
 
       <div id="warnings" class="warnings"></div>
     </section>
 
     <section class="step" id="step3" style="display:none">
-      <h2>4. Review &amp; render</h2>
+      <h2>3. Review cuts</h2>
       <div id="summary" class="summary"></div>
 
       <table id="cutsTable">
@@ -122,23 +149,57 @@
         </thead>
         <tbody></tbody>
       </table>
+    </section>
 
-      <div id="refineBox" class="row" style="display:none">
-        <input type="text" id="refineInput" placeholder="ask for more changes, e.g. also trim the Askerov fight" />
-        <button id="refineBtn">Refine with Claude</button>
-      </div>
-
+    <section class="step" id="stepAudioMode" style="display:none">
+      <h2>4. Choose audio &amp; render</h2>
       <div class="row">
-        <button id="renderBtn">Render edited video</button>
+        <select id="audioModeSelect">
+          <option value="original">Original audio — just cut, keep the real audio</option>
+          <option value="auto-tts">Automatic TTS — generate a voice-over for every chunk automatically</option>
+          <option value="manual-tts">Manual TTS — edit/generate/upload voice-over per chunk yourself</option>
+        </select>
       </div>
-      <p class="muted">Plain render — keeps the original audio untouched, no voice-over, no music.</p>
 
-      <details class="manual-fallback">
-        <summary>Or render with a custom audio mix (voice-over / background music)</summary>
+      <div id="audioModeOriginal" style="display:none">
+        <p class="muted">Keeps the original audio untouched, no voice-over, no music.</p>
+        <div class="row">
+          <button id="renderBtn">Render edited video</button>
+        </div>
+      </div>
+
+      <div id="audioModeAuto" style="display:none">
         <p class="muted">
-          Uses whatever voice-over audio you generated in "5. Voice-over text chunks" below,
-          placed at the correct spot in the edited video automatically.
+          Generates a Piper voice-over for every surviving chunk automatically (no
+          per-chunk review) and renders straight away. A real but minimal first version —
+          use Manual TTS below if you want to review/fix chunks individually.
         </p>
+        <div class="row">
+          <select id="autoTtsVoiceSelect"></select>
+          <button id="autoTtsBtn">Generate voice-over automatically &amp; render</button>
+        </div>
+      </div>
+
+      <div id="audioModeManual" style="display:none">
+        <p class="muted">
+          Text from everything your <em>currently enabled</em> cuts above would keep. If you
+          used the AI outline edit mode, this is one chunk per outline paragraph/
+          sub-paragraph; otherwise it falls back to ~500-character chunks cut at cue
+          boundaries. Click "Generate with Piper" on a chunk for a free, local, offline
+          voice-over (no API key, runs on this machine), or copy the text into any other TTS
+          tool and upload the result. Each chunk shows how many seconds of video it has to
+          fill, and the check tells you if the audio is too long for that slot. The text in
+          each chunk is editable — fix anything you want changed before copying or
+          generating, since that text is exactly what gets read aloud. Once a chunk has
+          audio (generated or uploaded), a player appears so you can listen right there.
+        </p>
+        <div class="row">
+          <button id="generateChunksBtn">Generate voice-over text chunks</button>
+        </div>
+        <div id="chunksStatus" class="muted"></div>
+        <div id="azureUsageStatus" class="muted" style="display:none"></div>
+        <div id="chunksView"></div>
+
         <div class="row">
           <label><input type="checkbox" id="cutOriginalAudioCheck" /> Cut the original audio track</label>
         </div>
@@ -150,36 +211,11 @@
         <div class="row">
           <button id="renderWithAudioBtn">Render with custom audio</button>
         </div>
-      </details>
+      </div>
 
       <div id="renderStatus" class="muted"></div>
       <a id="downloadLink" class="download" style="display:none" target="_blank">Download edited video</a>
       <video id="resultPreview" class="video" controls style="display:none"></video>
-    </section>
-
-    <section class="step" id="step4" style="display:none">
-      <h2>5. Voice-over text chunks</h2>
-      <p class="muted">
-        Text from everything your <em>currently enabled</em> cuts above would keep. If you ran
-        Step 1 with Claude, this is one chunk per outline paragraph/sub-paragraph — whatever
-        granularity the outline itself chose — with no overlaps, so nothing is covered twice or
-        skipped. Without an outline, falls back to ~500-character chunks cut at cue boundaries.
-        Use this if you're replacing the audio with text-to-speech: either click
-        "Generate with Piper" on a chunk for a free, local, offline voice-over (no API key,
-        runs on this machine), or copy the text into any other TTS tool and upload the result.
-        Each chunk shows how many seconds of video it has to fill, and the check tells you if
-        the audio is too long for that slot. The text in each chunk is editable — fix
-        misheard auto-caption words, stray music tags, or wrong symbols before copying or
-        generating, since that text is exactly what gets read aloud. Once a chunk has audio
-        (generated or uploaded), a player appears so you can listen right there — if it's wrong,
-        tweak the text and regenerate.
-      </p>
-      <div class="row">
-        <button id="generateChunksBtn">Generate voice-over text chunks</button>
-      </div>
-      <div id="chunksStatus" class="muted"></div>
-      <div id="azureUsageStatus" class="muted" style="display:none"></div>
-      <div id="chunksView"></div>
     </section>
 
   </div>

@@ -17,8 +17,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import azure_tts
-from .ai import ClaudeNotConfiguredError, generate_edit
+from . import azure_tts, youtube_ingest
 from .chunker import TextChunk, chunk_by_outline, chunk_kept_cues, kept_cues
 from .editor import Cut, calculate_keep_segments, map_to_output_timeline, normalize_cuts
 from .parser import ParsedResponse, parse_ai_response, parse_outline, parse_vtt
@@ -35,7 +34,7 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 # Fixed, predictable location mirroring the current video+VTT — so Claude
 # Desktop/Claude Code can be pointed at the same path every time, regardless
 # of which internal project_id is active. Holds exactly one project at a
-# time (single-user tool); a new upload overwrites whatever was here.
+# time (single-user tool); a new YouTube ingest overwrites whatever was here.
 WORKSPACE_DIR = BASE_DIR / "workspace"
 OUTLINE_PATH = WORKSPACE_DIR / "outline.md"
 CUTS_PATH = WORKSPACE_DIR / "cuts.md"
@@ -47,70 +46,161 @@ WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="VideoEditorY")
 
-# project_id -> {video_path, duration, status, output_path, error, vtt_text, conversation}
+# project_id -> {video_path, duration, status, phase, phase_message,
+#                progress, output_path, error, vtt_text, source_url, language}
 PROJECTS: dict[str, dict] = {}
 
 
 def _get_project(project_id: str) -> dict:
     project = PROJECTS.get(project_id)
     if not project:
-        raise HTTPException(404, "Unknown project_id — upload a video first.")
+        raise HTTPException(404, "Unknown project_id — paste a YouTube URL first.")
     return project
 
 
-@app.post("/api/upload")
-async def upload_video(
-    video: UploadFile = File(...),
-    subtitles: UploadFile | None = File(None),
-):
-    project_id = str(uuid.uuid4())
-    project_dir = UPLOAD_DIR / project_id
-    project_dir.mkdir(parents=True, exist_ok=True)
+def _mirror_into_workspace(video_path: Path, vtt_text: str) -> None:
+    """Mirrors the current project's video + transcript into the fixed
+    workspace/ folder so Claude Desktop/Claude Code always has a stable
+    path to work with. This is a new "current project" — drop any previous
+    video file (could have a different extension) and any stale outline/cuts
+    output from whatever was there before."""
 
-    suffix = Path(video.filename or "video.mp4").suffix or ".mp4"
-    video_path = project_dir / f"source{suffix}"
-
-    with open(video_path, "wb") as f:
-        while chunk := await video.read(1024 * 1024):
-            f.write(chunk)
-
-    try:
-        duration = get_duration(str(video_path))
-    except FFmpegNotFoundError as exc:
-        raise HTTPException(500, str(exc))
-    except Exception as exc:
-        raise HTTPException(400, f"Could not read video file: {exc}")
-
-    vtt_text = None
-    if subtitles is not None:
-        vtt_bytes = await subtitles.read()
-        vtt_text = vtt_bytes.decode("utf-8", errors="replace")
-        (project_dir / "subtitles.vtt").write_text(vtt_text, encoding="utf-8")
-
-    # Mirror into the fixed workspace folder (see WORKSPACE_DIR) so Claude
-    # Desktop/Claude Code always has a stable path to work with. This is a
-    # new "current project" — drop any previous video file (could have a
-    # different extension) and any stale Step 1/Step 2 output.
     for old_video in WORKSPACE_DIR.glob("video.*"):
         old_video.unlink()
-    shutil.copyfile(video_path, WORKSPACE_DIR / f"video{suffix}")
-    if vtt_text is not None:
-        (WORKSPACE_DIR / "subtitles.vtt").write_text(vtt_text, encoding="utf-8")
+    shutil.copyfile(video_path, WORKSPACE_DIR / f"video{video_path.suffix}")
+    (WORKSPACE_DIR / "subtitles.vtt").write_text(vtt_text, encoding="utf-8")
     OUTLINE_PATH.unlink(missing_ok=True)
     CUTS_PATH.unlink(missing_ok=True)
     shutil.rmtree(CHUNK_AUDIO_DIR, ignore_errors=True)
 
+
+# --- YouTube ingestion (download + Whisper transcription) -----------------
+
+
+def _run_ingest(project_id: str, youtube_url: str, language: str) -> None:
+    project = PROJECTS[project_id]
+    project_dir = UPLOAD_DIR / project_id
+
+    def set_phase(phase: str, message: str, progress: float = 0.0) -> None:
+        project["status"] = "processing"
+        project["phase"] = phase
+        project["phase_message"] = message
+        project["progress"] = progress
+
+    try:
+        set_phase("downloading", "Downloading…", 0.0)
+        video_path = youtube_ingest.download_video(
+            youtube_url, project_dir, on_progress=lambda frac, msg: set_phase("downloading", msg, frac)
+        )
+
+        duration = get_duration(str(video_path))
+        project["video_path"] = str(video_path)
+        project["duration"] = duration
+
+        set_phase("extracting_audio", "Extracting audio for transcription…", 0.0)
+        audio_path = youtube_ingest.extract_audio(video_path, project_dir)
+
+        vtt_text = youtube_ingest.transcribe(
+            audio_path,
+            language=language,
+            on_progress=lambda frac, msg: set_phase("transcribing", msg, frac),
+        )
+
+        project["vtt_text"] = vtt_text
+        (project_dir / "subtitles.vtt").write_text(vtt_text, encoding="utf-8")
+
+        _mirror_into_workspace(video_path, vtt_text)
+
+        project["status"] = "done"
+        project["phase"] = "done"
+        project["progress"] = 1.0
+
+    except youtube_ingest.DownloadError as exc:
+        project["status"] = "error"
+        project["phase"] = "downloading"
+        project["error"] = str(exc)
+    except youtube_ingest.TranscriptionError as exc:
+        project["status"] = "error"
+        project["phase"] = "transcribing"
+        project["error"] = str(exc)
+    except FFmpegNotFoundError as exc:
+        project["status"] = "error"
+        project["error"] = str(exc)
+    except Exception as exc:
+        project["status"] = "error"
+        project["error"] = f"Unexpected error: {exc}"
+
+
+@app.post("/api/ingest")
+async def ingest_youtube(youtube_url: str = Form(...), language: str = Form(...)):
+    project_id = str(uuid.uuid4())
+    project_dir = UPLOAD_DIR / project_id
+    project_dir.mkdir(parents=True, exist_ok=True)
+
     PROJECTS[project_id] = {
-        "video_path": str(video_path),
-        "duration": duration,
-        "status": "idle",
+        "status": "processing",
+        "phase": "queued",
+        "phase_message": "Queued…",
+        "progress": 0.0,
+        "video_path": None,
+        "duration": None,
         "output_path": None,
         "error": None,
-        "vtt_text": vtt_text,
-        "conversation": [],
+        "vtt_text": None,
+        "source_url": youtube_url,
+        "language": language,
     }
 
-    return {"project_id": project_id, "duration": duration, "filename": video.filename}
+    thread = threading.Thread(
+        target=_run_ingest, args=(project_id, youtube_url, language), daemon=True
+    )
+    thread.start()
+
+    return {"project_id": project_id}
+
+
+@app.get("/api/project/{project_id}/transcript")
+async def get_transcript(project_id: str):
+    project = _get_project(project_id)
+    if not project.get("vtt_text"):
+        raise HTTPException(404, "No transcript yet for this project.")
+    return {"vtt_text": project["vtt_text"], "duration": project["duration"]}
+
+
+@app.get("/api/project/{project_id}/cues")
+async def get_cues(project_id: str):
+    """Raw Whisper cues for Mode 1 (fully manual editing) — one checkbox
+    per cue in the frontend, no AI, no outline."""
+    project = _get_project(project_id)
+    if not project.get("vtt_text"):
+        raise HTTPException(404, "No transcript yet for this project.")
+
+    cues = parse_vtt(project["vtt_text"])
+    return {"cues": [{"start": c.start, "end": c.end, "text": c.text} for c in cues]}
+
+
+@app.post("/api/cues-cut")
+async def cues_cut(project_id: str = Form(...), cues_json: str = Form(...)):
+    """Turn user-selected raw cues directly into cuts, without any AI —
+    each selected cue's own [start, end) range is already a removable
+    range, same idea as /api/outline-cuts but one level more primitive
+    (cue-granularity instead of outline-section-granularity)."""
+    project = _get_project(project_id)
+
+    try:
+        raw_cues = json.loads(cues_json)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Invalid cues JSON")
+
+    cuts = [
+        Cut(start=float(c["start"]), end=float(c["end"]), text=c.get("text", ""), reason="Removed via manual cue selection")
+        for c in raw_cues
+    ]
+
+    if not cuts:
+        raise HTTPException(400, "No cues selected.")
+
+    return _build_cuts_response(cuts, project["duration"])
 
 
 def _build_cuts_response(
@@ -157,18 +247,18 @@ async def parse_ai_text(project_id: str = Form(...), ai_response: str = Form(...
 @app.get("/api/workspace/video")
 async def workspace_video():
     """Serves the current workspace video so the browser can restore the
-    preview after a page reload, without needing to re-upload (which would
+    preview after a page reload, without needing to re-ingest (which would
     wipe outline.md/cuts.md as if it were a new project)."""
     matches = list(WORKSPACE_DIR.glob("video.*"))
     if not matches:
-        raise HTTPException(404, "No video in the workspace yet — upload one first.")
+        raise HTTPException(404, "No video in the workspace yet.")
     return FileResponse(matches[0])
 
 
 @app.get("/api/workspace/outline")
 async def workspace_outline():
     if not OUTLINE_PATH.exists():
-        raise HTTPException(404, "No outline.md yet — ask Claude to do Step 1 first.")
+        raise HTTPException(404, "No outline.md yet — ask Claude to build the outline first.")
 
     text = OUTLINE_PATH.read_text(encoding="utf-8")
     sections = parse_outline(text)
@@ -192,10 +282,10 @@ async def workspace_outline():
 async def outline_cuts(project_id: str = Form(...), sections_json: str = Form(...)):
     """Turn user-selected outline sections directly into cuts, without
     asking an AI — the outline's timestamps already come straight from the
-    original cues (see Step 1 in AI_EDITING_INSTRUCTIONS.md), so a section
-    the user picked for removal can be treated as a cut covering exactly
-    that section's time range. Overlap between a selected parent paragraph
-    and its sub-paragraphs is handled by the normal merge logic."""
+    original cues (see AI_EDITING_INSTRUCTIONS.md), so a section the user
+    picked for removal can be treated as a cut covering exactly that
+    section's time range. Overlap between a selected parent paragraph and
+    its sub-paragraphs is handled by the normal merge logic."""
     project = _get_project(project_id)
 
     try:
@@ -216,8 +306,8 @@ async def outline_cuts(project_id: str = Form(...), sections_json: str = Form(..
 
 def _build_voice_chunks(project: dict, normalized_cuts: list[Cut]) -> tuple[list[TextChunk], int, int, str]:
     """One chunk per outline paragraph/sub-paragraph when workspace/outline.md
-    exists and parses (matching whatever granularity Step 1 already chose),
-    otherwise falls back to ~500-character chunks. Used both when
+    exists and parses (matching whatever granularity the AI outline already
+    chose), otherwise falls back to ~500-character chunks. Used both when
     generating/listing chunks and when re-deriving chunk indices at render
     time — these must stay in lockstep, or a chunk's audio could get
     matched to the wrong index."""
@@ -242,12 +332,12 @@ def _build_voice_chunks(project: dict, normalized_cuts: list[Cut]) -> tuple[list
 @app.post("/api/transcript-chunks")
 async def transcript_chunks(project_id: str = Form(...), cuts_json: str = Form(...)):
     """Text of everything the current cuts would NOT remove, split into
-    voice-over chunks — one per outline paragraph/sub-paragraph if Step 1
-    has been run, otherwise ~500-character chunks as a fallback."""
+    voice-over chunks — one per outline paragraph/sub-paragraph if an AI
+    outline exists, otherwise ~500-character chunks as a fallback."""
     project = _get_project(project_id)
 
     if not project.get("vtt_text"):
-        raise HTTPException(400, "No subtitles uploaded for this project.")
+        raise HTTPException(400, "No transcript yet for this project.")
 
     try:
         raw_cuts = json.loads(cuts_json)
@@ -332,6 +422,27 @@ async def azure_usage():
     return azure_tts.get_usage()
 
 
+def _synthesize_chunk(index: int, text: str, voice: str) -> Path:
+    """Dispatches to Piper (free, offline, no API key) or Azure AI Speech
+    (paid cloud API, needs AZURE_SPEECH_KEY/REGION) depending on which voice
+    was picked, writing the result to workspace/chunk_audio/chunk_{index}.*"""
+
+    CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    for old in CHUNK_AUDIO_DIR.glob(f"chunk_{index:04d}.*"):
+        old.unlink()
+
+    if voice in PIPER_KNOWN_VOICES:
+        audio_path = CHUNK_AUDIO_DIR / f"chunk_{index:04d}.wav"
+        synthesize_to_wav(text, voice, str(audio_path))
+    elif voice in azure_tts.KNOWN_VOICES:
+        audio_path = CHUNK_AUDIO_DIR / f"chunk_{index:04d}.mp3"
+        azure_tts.synthesize_to_file(text, voice, str(audio_path))
+    else:
+        raise ValueError(f"Unknown voice: {voice}")
+
+    return audio_path
+
+
 @app.post("/api/transcript-chunks/tts")
 async def generate_chunk_tts(
     project_id: str = Form(...),
@@ -341,32 +452,19 @@ async def generate_chunk_tts(
     voice: str = Form(...),
 ):
     """Generate a chunk's voice-over and check it isn't longer than the
-    video slot it would replace. Dispatches to Piper (free, offline, no API
-    key) or Azure AI Speech (paid cloud API, needs AZURE_SPEECH_KEY/REGION)
-    depending on which voice was picked."""
+    video slot it would replace."""
     _get_project(project_id)
 
-    CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-
-    for old in CHUNK_AUDIO_DIR.glob(f"chunk_{chunk_index:04d}.*"):
-        old.unlink()
-
-    if voice in PIPER_KNOWN_VOICES:
-        audio_path = CHUNK_AUDIO_DIR / f"chunk_{chunk_index:04d}.wav"
-        try:
-            synthesize_to_wav(text, voice, str(audio_path))
-        except VoiceNotAvailableError as exc:
-            raise HTTPException(400, str(exc))
-    elif voice in azure_tts.KNOWN_VOICES:
-        audio_path = CHUNK_AUDIO_DIR / f"chunk_{chunk_index:04d}.mp3"
-        try:
-            azure_tts.synthesize_to_file(text, voice, str(audio_path))
-        except azure_tts.AzureNotConfiguredError as exc:
-            raise HTTPException(400, str(exc))
-        except RuntimeError as exc:
-            raise HTTPException(502, str(exc))
-    else:
-        raise HTTPException(400, f"Unknown voice: {voice}")
+    try:
+        audio_path = _synthesize_chunk(chunk_index, text, voice)
+    except VoiceNotAvailableError as exc:
+        raise HTTPException(400, str(exc))
+    except azure_tts.AzureNotConfiguredError as exc:
+        raise HTTPException(400, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc))
 
     return _chunk_audio_result(chunk_index, audio_path, slot_duration)
 
@@ -390,39 +488,11 @@ async def workspace_cuts(project_id: str):
     project = _get_project(project_id)
 
     if not CUTS_PATH.exists():
-        raise HTTPException(404, "No cuts.md yet — ask Claude to do Step 2 first.")
+        raise HTTPException(404, "No cuts.md yet — ask Claude to produce the cuts first.")
 
     text = CUTS_PATH.read_text(encoding="utf-8")
     parsed = parse_ai_response(text)
     return _cuts_response(parsed, project["duration"])
-
-
-@app.post("/api/ai-edit")
-async def ai_edit(project_id: str = Form(...), instruction: str = Form(...)):
-    project = _get_project(project_id)
-
-    if not project.get("vtt_text"):
-        raise HTTPException(
-            400,
-            "No subtitles uploaded for this project — upload a .vtt file "
-            "alongside the video to use the Claude-driven edit flow.",
-        )
-
-    try:
-        reply_text, updated_messages = generate_edit(
-            project["conversation"], instruction, project["vtt_text"]
-        )
-    except ClaudeNotConfiguredError as exc:
-        raise HTTPException(500, str(exc))
-    except Exception as exc:
-        raise HTTPException(502, f"Claude request failed: {exc}")
-
-    project["conversation"] = updated_messages
-
-    parsed = parse_ai_response(reply_text)
-    response = _cuts_response(parsed, project["duration"])
-    response["raw_reply"] = reply_text
-    return response
 
 
 def _run_render(project_id: str, keep_segments: list[tuple[float, float]], output_path: Path) -> None:
@@ -572,14 +642,117 @@ async def render_with_audio(
     return {"status": "started"}
 
 
+def _run_auto_tts(
+    project_id: str,
+    normalized_cuts: list[Cut],
+    keep_segments: list[tuple[float, float]],
+    output_path: Path,
+    voice: str,
+) -> None:
+    """Mode 2 of the audio-mode combobox: automatically generates a Piper/
+    Azure voice-over for every surviving chunk (no per-chunk review), then
+    renders straight away — i.e. the manual-TTS render path, with the
+    per-chunk generation loop fully automated instead of user-driven."""
+
+    project = PROJECTS[project_id]
+    try:
+        chunks, _, _, _ = _build_voice_chunks(project, normalized_cuts)
+        total = len(chunks)
+
+        for index, chunk in enumerate(chunks):
+            project["status"] = "generating_voiceover"
+            project["phase"] = "generating_voiceover"
+            project["phase_message"] = f"Generating voice-over… chunk {index + 1}/{total}"
+            project["progress"] = index / total if total else 0.0
+            _synthesize_chunk(index, chunk.text, voice)
+
+        voice_overlays: list[tuple[float, str]] = []
+        for index, chunk in enumerate(chunks):
+            matches = [
+                path
+                for path in CHUNK_AUDIO_DIR.glob(f"chunk_{index:04d}.*")
+                if not path.name.startswith("_music")
+            ]
+            if not matches:
+                continue
+            output_start = map_to_output_timeline(chunk.start, keep_segments)
+            voice_overlays.append((output_start, str(matches[0])))
+
+        project["status"] = "rendering"
+        project["phase"] = "rendering"
+        project["phase_message"] = "Rendering video…"
+        render_video_with_audio(
+            project["video_path"], str(output_path), keep_segments, False, voice_overlays
+        )
+
+        project["status"] = "done"
+        project["phase"] = "done"
+        project["progress"] = 1.0
+        project["output_path"] = str(output_path)
+    except Exception as exc:
+        project["status"] = "error"
+        project["error"] = str(exc)
+
+
+@app.post("/api/auto-tts")
+async def auto_tts(
+    project_id: str = Form(...),
+    cuts_json: str = Form(...),
+    voice: str = Form(...),
+):
+    """Audio Option 2 — automatic TTS: batch-generates a voice-over for
+    every chunk with one default voice and no per-chunk review, then
+    renders. A real but minimal first implementation, to be developed
+    further later."""
+    project = _get_project(project_id)
+
+    if not project.get("vtt_text"):
+        raise HTTPException(400, "No transcript yet for this project.")
+
+    try:
+        raw_cuts = json.loads(cuts_json)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Invalid cuts JSON")
+
+    cuts = [Cut(start=float(c["start"]), end=float(c["end"])) for c in raw_cuts]
+    normalized = normalize_cuts(cuts, project["duration"])
+    keep_segments = calculate_keep_segments(normalized, project["duration"])
+
+    if not keep_segments:
+        raise HTTPException(400, "Every segment was cut — nothing would be left to render.")
+
+    output_name = f"{project_id}_edited.mp4"
+    output_path = OUTPUT_DIR / output_name
+
+    project["status"] = "generating_voiceover"
+    project["error"] = None
+
+    thread = threading.Thread(
+        target=_run_auto_tts,
+        args=(project_id, normalized, keep_segments, output_path, voice),
+        daemon=True,
+    )
+    thread.start()
+
+    return {"status": "started"}
+
+
 @app.get("/api/status/{project_id}")
 async def status(project_id: str):
     project = _get_project(project_id)
 
     response = {"status": project["status"]}
 
-    if project["status"] == "done" and project["output_path"]:
+    if project.get("phase"):
+        response["phase"] = project["phase"]
+        response["phase_message"] = project.get("phase_message", "")
+        response["progress"] = project.get("progress", 0.0)
+
+    if project["status"] == "done" and project.get("output_path"):
         response["download_url"] = f"/api/download/{Path(project['output_path']).name}"
+
+    if project["status"] == "done" and project.get("duration") is not None:
+        response["duration"] = project["duration"]
 
     if project["status"] == "error":
         response["error"] = project.get("error")

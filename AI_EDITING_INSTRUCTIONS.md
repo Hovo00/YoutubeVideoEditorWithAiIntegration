@@ -1,14 +1,21 @@
-# Transcript Editing Instructions (for manual use with any AI)
+# Transcript Editing Instructions (for Claude Desktop / Claude Code)
 
-> **Purpose of this file:** this is a copy-pasteable instruction block for
-> Stage 0 of the text-based video editor project. No automation yet — you
-> paste these instructions into any AI chat (ChatGPT, Claude, etc.), together
-> with a VTT transcript and a plain-language editing request, and the AI
-> replies with a structured, timestamp-safe result you can inspect by hand.
-> Once this manual loop feels reliable, the same rules become the system
-> prompt for the automated backend (see the architecture discussed for the
-> `video_text_editor` project: VTT → AI cut decisions → deterministic
-> normalize/merge → FFmpeg render).
+> **Purpose of this file:** VideoEditorY downloads a YouTube video and
+> transcribes it locally with Whisper automatically — there is no more
+> manual caption download or upload step. Once transcription finishes, the
+> app asks you (via a "Copy message for Claude" button) to do one of two
+> things with the resulting transcript, depending on which editing mode the
+> user picked in the app:
+>
+> - **Mode 2 — Build a corrected outline**: structure the transcript into
+>   readable paragraphs with titles, correcting Whisper's transcription
+>   mistakes as you go, so the user can review/remove whole sections.
+> - **Mode 3 — Autonomous duration-targeted edit**: decide what to cut
+>   yourself from a holistic instruction (e.g. "trim this to about 15
+>   minutes, keep only the important information").
+>
+> (The app also has a **Mode 1**, fully manual cue-by-cue cutting with no AI
+> involved at all — nothing in this file applies to that mode.)
 
 ---
 
@@ -29,44 +36,47 @@ restraint matter more than cleverness here.
    text of the cue
    ```
 
-   Cues are separated by a blank line. This is **auto-generated YouTube
-   caption data**, so be aware of its quirks:
-   - Cues frequently **overlap in time** with their neighbors (e.g. one cue
-     runs 00:00:03.600 → 00:00:09.480 while the next runs
-     00:00:05.359 → 00:00:09.480). This is normal for auto-captions, not an
-     error you need to fix.
-   - Text may contain transcription mistakes, stray tags like `[музыка]`
-     (music), or fragments of other languages picked up by auto-translate.
-     Do not "correct" these unless the instruction explicitly asks you to.
+   Cues are separated by a blank line. This is a **locally-generated
+   Whisper transcription** (not YouTube's auto-generated captions) — it is
+   generally clean, non-overlapping, and sentence-aligned, a real
+   improvement over raw auto-captions. That said, it isn't perfect:
+   - Cues can still occasionally **overlap in time** with their neighbors,
+     or split one sentence across two cues. This is rarer than with
+     auto-captions, but the worked examples below cover exactly how to
+     handle it when it happens — don't assume it can't occur.
+   - Whisper can mishear words (sound-alike mistakes), stumble on names or
+     technical terms, or occasionally produce a run of nonsense on noisy
+     audio. **In Mode 2 only**, you are permitted to correct these — see
+     "Correcting Whisper errors" below. In Mode 3, leave all wording
+     untouched regardless (see Hard Rule 3).
    - The transcript you receive might be an **original**, or it might be an
      **already-edited transcript from a previous round** (see "Iteration"
      below). Treat both cases identically — just apply the new instruction
      on top of whatever transcript you are given.
 
 2. **INSTRUCTION** — a plain-language description of what to change, e.g.
-   "remove the sponsor section", "cut the intro before the subject starts
-   talking", "remove this repeated explanation", "delete the stray
-   `[музыка]`-only cues".
+   "remove the sponsor section", "this is 40 minutes, trim it to about 15,
+   keep only the important information", "delete the repeated explanation".
 
 ### Two ways this gets used
 
 **If you have file read/write access to this project folder** (Claude
 Code, Claude Desktop with the folder attached, etc.) — I may give you
-short commands by name, "step 1" or "step 2", instead of re-explaining
+short commands by name, "Mode 2" or "Mode 3", instead of re-explaining
 each time:
-- **"Step 1"** means: do exactly what "Step 1 — Generate a readable
-  outline" below describes.
-- **"Step 2"** (or just a plain editing instruction) means: apply the
+- **"Mode 2"** means: do exactly what "Mode 2 — Build a corrected outline"
+  below describes.
+- **"Mode 3"** (or just a plain editing instruction) means: apply the
   instruction and produce `REMOVED`/`CHANGE_LOG` per "Expected output
   format" below, writing it to a file as well as replying in chat.
 
 **If you don't have file access** (e.g. plain ChatGPT/Gemini web chat) —
-ignore the step names; just use the TRANSCRIPT + INSTRUCTION template at
+ignore the mode names; just use the TRANSCRIPT + INSTRUCTION template at
 the bottom of this file and reply normally in chat.
 
-### Step 1 — Generate a readable outline
+### Mode 2 — Build a corrected outline
 
-When asked to do "step 1":
+When asked to do "Mode 2":
 
 1. Read `workspace/subtitles.vtt` in this project folder.
 2. Divide the **entire** transcript into paragraphs by meaning/topic, not
@@ -82,10 +92,10 @@ When asked to do "step 1":
    gap.** The same applies between consecutive sub-paragraphs within the
    same parent paragraph, and the first/last sub-paragraph must align
    exactly with its parent's own start/end.
-   - **The common mistake that breaks this:** auto-caption cues routinely
-     overlap their own neighbors in time (cue N might run 01:10–01:15 while
-     cue N+1 runs 01:12–01:18). If you pick paragraph A's end from "the
-     last cue that feels like it belongs to A" and paragraph B's start from
+   - **The common mistake that breaks this:** cues occasionally overlap
+     their own neighbors in time (cue N might run 01:10–01:15 while cue
+     N+1 runs 01:12–01:18). If you pick paragraph A's end from "the last
+     cue that feels like it belongs to A" and paragraph B's start from
      "the first cue that feels like it belongs to B" independently, you can
      end up choosing two different, mutually-overlapping cues — producing
      exactly the overlap this rule forbids. Instead, pick **one single
@@ -98,14 +108,108 @@ When asked to do "step 1":
      confirm `end[i] == start[i+1]` exactly. If any pair doesn't match, fix
      it before writing the file — don't rely on the app to clean this up
      for you.
+   - **When picking which shared boundary to use, prefer one that falls at
+     the end of a complete sentence/thought, not mid-sentence.** Rule 4
+     below means the paragraph's body text is the cues' own words (plus any
+     corrections from the section below), so a bad boundary choice directly
+     produces a visibly half-finished sentence in the file — pick a cleaner
+     cut point whenever one is available nearby, even if it means a
+     paragraph runs noticeably longer or shorter than you'd otherwise
+     choose. This matters even when the "obvious" topic-change point falls
+     between two cues that together form one incomplete sentence — see the
+     two worked examples below for exactly how to handle this, including
+     the common trap of moving the boundary just one cue and declaring
+     victory without checking that the *new* boundary is also clean. **Keep
+     extending the boundary and re-checking both sides until neither one
+     trails off — this can take several cues of movement, not just one, and
+     that's fine.**
 4. For each paragraph/sub-paragraph, write a heading with a short
-   descriptive title and its start/end timestamps. These should still be
-   real cue timestamps from the transcript (never invented or rounded),
-   but per rule 3, the shared boundary between two neighbors is a single
-   chosen value, not independently "whichever cue felt right" on each
-   side. Follow the heading with a short prose summary (2-6 sentences) of
-   what is actually said in that span, in your own words. This is a
-   human-reading summary, not a cue-by-cue transcription.
+   descriptive title and its start/end timestamps (real cue timestamps,
+   never invented or rounded; per rule 3, the shared boundary between two
+   neighbors is a single chosen value).
+   - **Write the title in the same language as the transcript itself** —
+     a Russian transcript gets Russian titles, an English one gets English
+     titles, and so on. Don't default to English just because these are
+     your own words; match whatever language the person in the video is
+     actually speaking. (The body text is already guaranteed to match,
+     since it's based on the cues themselves — this is specifically about
+     the title, since that's the one thing you're phrasing yourself.)
+   - Follow the heading with **the actual transcript text for that span —
+     not a summary, not a paraphrase.** Take every cue you assigned to this
+     paragraph/sub-paragraph (per rule 3, each cue belongs to exactly one)
+     and write out their text, concatenated in order, as continuous prose —
+     no per-cue timestamps, no omissions, no added words beyond the
+     corrections described below. A cue's text must be represented **once**,
+     under whichever single paragraph it was assigned to — never copied
+     into two paragraphs, never left out of all of them.
+   - **If a top-level paragraph has sub-paragraphs, the top-level heading
+     gets NO body text of its own — skip straight from the heading to the
+     first sub-paragraph.** Its sub-paragraphs already cover every one of
+     its cues between them (rule 3), so giving the parent its own text too
+     would duplicate everything underneath it word-for-word. Only a
+     heading with no children (a plain top-level paragraph, or a
+     sub-paragraph) gets an actual text block.
+   - **`>>` and similar speaker-change marks are transcription notation,
+     not spoken words — same category as `[music]`-style tags.** Leave
+     them out of the text you write; they describe *that* a new person
+     started talking, not anything anyone actually said. This isn't a
+     "paraphrase" or "omission" of real content — it's just not copying in
+     the caption software's own formatting marks.
+
+#### Correcting Whisper errors
+
+Unlike raw auto-captions, Whisper's transcription can still contain misheard
+words (sound-alike errors), minor grammar slips, or garbled fragments on
+noisy audio. **In Mode 2 only**, you are permitted — and encouraged — to
+correct these in the body text you write, following this confidence-tiered
+convention so corrections stay honest and checkable:
+
+- **High confidence** (a clear sound-alike mistake, an obvious grammar
+  slip, a name you can confirm from context elsewhere in the transcript):
+  correct it silently in the body text, no markup needed. Example: Whisper
+  wrote "the surrogate are kind of assets" where context makes it obvious
+  the speaker said "the certs are kind of assets" — just write "the certs
+  are kind of assets."
+- **Medium confidence** (a plausible fix, but you're not fully certain):
+  write the corrected text inline, marked right after it like
+  `{corrected: Whisper heard "X"}`, so the user can spot-check it against
+  the actual video before trusting it. Example: `...he fought in Sweden at
+  K-1 {corrected: Whisper heard "K-1 in Switzerland"}...`
+- **Low confidence / genuinely unintelligible**: do **not** invent
+  plausible-sounding content to fill the gap. Leave it marked as
+  `[unclear: <original Whisper text>]` instead, so it's visible as a gap
+  rather than silently replaced with a guess.
+- This permission applies **only** to the prose you write under Mode 2's
+  outline headings. It does **not** extend to Mode 3's `REMOVED`-based
+  cutting — Hard Rule 3 there still forbids any rewording, since Mode 3's
+  output only ever removes whole cues and never re-renders transcript text.
+
+**Worked example:**
+
+Whisper transcript excerpt:
+```
+00:07:12.400 --> 00:07:16.100
+He trained with him for two years before the the surrogate are kind of assets
+
+00:07:16.100 --> 00:07:19.800
+and then he moved to blerghhh unclear audio fragment here to keep training
+```
+
+Corrected outline body text for this span:
+```markdown
+## Training Background (00:07:12.400 - 00:07:19.800)
+
+He trained with him for two years before the certs are kind of assets, and
+then he moved to [unclear: blerghhh unclear audio fragment here] to keep
+training.
+```
+
+Here "the certs are kind of assets" is a high-confidence silent fix (a
+known sound-alike mistake seen elsewhere in this kind of audio), while the
+second cue's genuinely garbled fragment is honestly flagged rather than
+guessed at — don't invent a plausible place name just because the sentence
+"needs" one.
+
 5. Write the result to `workspace/outline.md`, in **exactly** this
    format — the app parses it automatically to build a navigable view
    with click-to-seek timestamps, so the heading pattern must match
@@ -116,24 +220,29 @@ When asked to do "step 1":
 
    ## <Title> (HH:MM:SS.mmm - HH:MM:SS.mmm)
 
-   <prose summary>
-
    ### <Sub-title> (HH:MM:SS.mmm - HH:MM:SS.mmm)
 
-   <prose summary>
+   <verbatim (or corrected, per above) cue text for this sub-paragraph's cues, concatenated as prose, no speaker marks>
 
-   ## <Next title> (HH:MM:SS.mmm - HH:MM:SS.mmm)
+   ### <Next sub-title> (HH:MM:SS.mmm - HH:MM:SS.mmm)
 
-   <prose summary>
+   <verbatim (or corrected) cue text for this sub-paragraph's cues, concatenated as prose, no speaker marks>
+
+   ## <Next title, no sub-paragraphs this time> (HH:MM:SS.mmm - HH:MM:SS.mmm)
+
+   <verbatim (or corrected) cue text for this paragraph's cues, concatenated as prose, no speaker marks>
    ```
 
-   `##` for top-level paragraphs, `###` for sub-paragraphs, each followed
-   by `(start - end)` with a hyphen or en dash.
+   Note the first `##` heading above has no text block of its own —
+   straight to its `###` children. The second `##` heading has no
+   children, so it gets a text block directly. `##` for top-level
+   paragraphs, `###` for sub-paragraphs, each followed by `(start - end)`
+   with a hyphen or en dash.
 
 6. Also show the outline in your reply, so I can see it without opening
    the file.
 
-#### Step 1 worked example — fixing an overlap before it happens
+#### Worked example — fixing an overlap before it happens
 
 **Input TRANSCRIPT (excerpt, two topics back to back):**
 ```
@@ -163,31 +272,115 @@ independently instead of one shared boundary.
 **Right:** notice the middle cue (`00:03:44.200 --> 00:03:49.800`) itself
 bundles both topics — it contains the question ("did you train with other
 Armenian fighters") AND the first words of the answer ("Yeah, I trained
-with Melsik"). Auto-captions often fuse a question and the start of its
-answer into one cue like this. You can't split a cue's text in half, so
-pick **one of its own real edges** as the shared boundary and accept that
-the whole cue goes to one side:
+with Melsik"). You can't split a cue's text in half, so pick **one of its
+own real edges** as the shared boundary and accept that the whole cue goes
+to one side:
 ```
 ## Dylan looks Armenian (00:03:15.100 - 00:03:44.200)
 ## Training with Melsik and Edmond Tarverdyan (00:03:44.200 - 00:04:...)
 ```
 Here `00:03:44.200` is reused as both A's end and B's start — a real cue
-timestamp, not invented, and no overlap. The app's own merge logic (not
-your job) will route the "Did you train..." cue's text to whichever
-paragraph makes more sense once cuts are applied — you don't need to
-agonize over getting a bundled cue's content perfectly split, you just need
-to **never state two different, overlapping timestamps** as the boundary.
+timestamp, not invented, and no overlap. Since that timestamp **is** the
+"Did you train..." cue's own start, the whole cue belongs to paragraph B
+(a paragraph's start is inclusive, its end is exclusive — a cue starting
+exactly at a shared boundary belongs to the paragraph that boundary starts,
+not the one it ends). Per rule 4, B's text block is then simply that cue's
+text plus the next one's, concatenated:
 
-**Step 1 never changes the transcript, and never proposes cuts.** It only
-reads and describes — if I haven't given an editing instruction, don't
-imply or suggest removals in the outline.
+```markdown
+## Dylan looks Armenian (00:03:15.100 - 00:03:44.200)
 
-### Your task (Step 2 — editing)
+He looks Armenian. His mom's white Texan, but Dylan looks Armenian
 
-Decide which **whole cue blocks** should be removed to satisfy the
-instruction, then produce the output described below. **If I haven't
-asked for a change, don't make one** — no instruction means no cuts, and
-nothing in the transcript gets touched or reworded regardless.
+## Training with Melsik and Edmond Tarverdyan (00:03:44.200 - 00:04:...)
+
+Did you train with other Armenian UFC fighters? Yeah, I trained with Melsik, uh Edmond Tarverdyan. Yeah, so but they're in different weight classes
+```
+
+Both paragraphs read as complete, natural text — no sentence is cut off
+mid-way, because the boundary was chosen at a real sentence break instead
+of splitting the bundling cue's own content in two.
+
+#### Worked example — a sentence split across two different cues
+
+This is a different failure from the one above, and needs a different fix.
+Sometimes a sentence isn't bundled inside one cue — it's split across two
+separate, overlapping cues, each holding one half:
+
+```
+00:03:35.480 --> 00:03:38.520
+but we'll see. We'll see what's going to
+
+00:03:36.720 --> 00:03:40.840
+happen with him. By the way, did you
+```
+
+"We'll see what's going to" and "happen with him." are two halves of one
+sentence, but they live in two different cues. **No timestamp *between*
+these two cues fixes this** — each cue is a whole, indivisible unit (same
+rule as everywhere else: never split a cue's own text), so whichever side
+of a boundary you put a cue on, that cue's *entire* text goes there. Putting
+the boundary at `00:03:36.720` (the second cue's own start — the "obvious"
+choice, since that's where the new topic's cue begins) still breaks the
+sentence: the first cue's "...what's going to" ends up alone in paragraph A,
+and the second cue's "happen with him." starts paragraph B. No clever
+timestamp choice between `00:03:35.480` and `00:03:40.840` avoids this,
+because the problem isn't *where* the boundary falls between the cues,
+it's *that* it falls between them at all.
+
+**The fix:** don't let a paragraph boundary land between two cues that
+together form one incomplete sentence. Move the boundary outward — but
+**check BOTH resulting sides, not just the one sentence you noticed first.**
+Moving to `00:03:38.520` (the first cue's own end) completes "We'll see
+what's going to happen with him" — but the full transcript continues "...By
+the way, did you ever train with any Armenian fighters? Like are you uh Did
+you train with other Armenian UFC fighters? >> Yeah, I trained to Melsik...",
+and that same cue also bundles the *start* of a new question ("By the way,
+did you..."). Stopping at `00:03:38.520` would just trade one unfinished
+sentence for another — now trailing off at "By the way, did you" instead.
+
+Keep extending the boundary, cue by cue, until you reach a point where
+**both** sides are genuinely complete — here, that's wherever the speaker
+actually starts answering (the `>>` marking a new speaker is a strong hint):
+
+```markdown
+## Dylan Looks Armenian — Will He Be a Fighter? (00:03:12.920 - 00:03:XX.XXX)
+
+...but we'll see. We'll see what's going to happen with him. By the way, did you ever train with any Armenian fighters? Like are you uh Did you train with other Armenian UFC fighters?
+
+## Training With Other Armenian UFC Fighters (00:03:XX.XXX - 00:03:58.480)
+
+>> Yeah, I trained to Melsik, uh Edmond Tarverdyan. Yeah, so but um they're in different weight class, that's why we don't train together and uh they cannot keep up with me.
+```
+
+(`00:03:XX.XXX` here is whichever real cue's own start lines up with "Yeah,
+I trained to Melsik" — use that cue's actual timestamp, not an invented
+one.) Now paragraph A ends on a complete question and paragraph B opens
+cleanly with the answer — nothing trails off on either side.
+
+**This is an iterative check, not a one-hop fix:** after moving a boundary
+to fix one broken sentence, re-check the *new* boundary the same way —
+does the cue now sitting at the edge also bundle in the start of another
+sentence? If so, keep extending until a pass where both sides are clean.
+A boundary landing several cues away from the "obvious" topic-change point
+is a completely acceptable trade for this. **Getting sentences to end
+cleanly on both sides of every boundary is worth far more than keeping the
+topic-change point exact.**
+
+**Mode 2 never proposes cuts.** It only reads, describes, and (per the
+section above) lightly corrects — it never decides what to remove. Cut
+selection in Mode 2 happens in the app itself, via checkboxes on the
+outline you produced.
+
+### Mode 3 — Autonomous duration-targeted edit
+
+This mode is typically invoked with a holistic instruction like "this
+transcript is 40 minutes, trim it to about 15, keep only the important
+information" — you decide which whole cue blocks to remove to satisfy it,
+then produce the output described below. **If I haven't asked for a
+change, don't make one** — no instruction means no cuts, and nothing in the
+transcript gets touched or reworded regardless. No outline is involved in
+this mode.
 
 ### Hard rules — do not break these
 
@@ -196,14 +389,14 @@ nothing in the transcript gets touched or reworded regardless.
    the input TRANSCRIPT.
 2. **Only remove whole cue blocks.** Do not split a cue or try to cut out a
    sub-string of a cue's text while keeping the rest — with overlapping
-   auto-caption timestamps there is no reliable sub-cue boundary to cut at.
-   If the instruction clearly targets only part of a cue, remove the
-   smallest set of whole cues that covers the targeted content, and say so
-   in `CHANGE_LOG`.
+   timestamps there is no reliable sub-cue boundary to cut at. If the
+   instruction clearly targets only part of a cue, remove the smallest set
+   of whole cues that covers the targeted content, and say so in
+   `CHANGE_LOG`.
 3. **Don't touch anything the instruction didn't ask about.** No rewording,
-   no translation, no fixing typos/auto-caption errors, no reordering, no
-   merging cues. Surviving cues must be byte-identical to the input
-   (timestamp and text), minus the ones you removed.
+   no translation, no fixing Whisper errors (that's Mode 2 only), no
+   reordering, no merging cues. Surviving cues must be byte-identical to
+   the input (timestamp and text), minus the ones you removed.
 4. **Preserve original order.** Never reorder cues.
 5. **If you are not confident which cues match the instruction, do not
    guess.** List the ambiguity under `QUESTIONS` instead of silently
@@ -212,11 +405,10 @@ nothing in the transcript gets touched or reworded regardless.
    remaining timestamps earlier to "close the gap." Keep every surviving
    timestamp exactly as it was in the input — gap-closing happens later in
    the deterministic rendering step, not by you.
-7. **If the instruction gives a target output length** (e.g. "make it about
-   15 minutes"), you MUST account for cue overlap before reporting or
-   relying on how much you've removed:
-   - Because input cues overlap, the sum of each removed cue's own
-     `(end - start)` **overcounts** how much unique video time you've
+7. **Duration-targeted instructions ("make it about 15 minutes") are the
+   central use case for this mode, not an edge case — get the math right:**
+   - Because input cues can overlap, the sum of each removed cue's own
+     `(end - start)` can **overcount** how much unique video time you've
      actually removed. Two overlapping cues covering 10.0–14.0 and
      12.0–16.0 only remove 6 seconds of real video (10.0–16.0), not 4+4=8.
    - Before finalizing, merge your REMOVED ranges by time exactly like the
@@ -298,36 +490,36 @@ contents, not just your chat reply. Still show it in your reply too.
 **Input TRANSCRIPT (excerpt):**
 ```
 00:03:30.257 --> 00:03:34.159
-[музыка] В скором времени молодому
+[music] In the near future the young
 
 00:03:32.200 --> 00:03:35.497
-дарованию было отправлено предложение,
+talent received an offer
 
 00:03:34.159 --> 00:03:36.400
-от которого нельзя было отказываться.
+that could not be refused.
 
 00:03:35.497 --> 00:03:39.040
-[музыка]
+[music]
 
 00:03:36.400 --> 00:03:41.319
-На турнире K1 в Швеции в главном событии
+At the K-1 tournament in Sweden, the main event
 ```
 
-**Instruction:** "Remove cues that are only a `[музыка]` tag with no real
+**Instruction:** "Remove cues that are only a `[music]` tag with no real
 speech."
 
 **Output:**
 ```
 ## REMOVED
 
-00:03:35.497 --> 00:03:39.040 | "[музыка]" | Cue contains only a music tag, no speech
+00:03:35.497 --> 00:03:39.040 | "[music]" | Cue contains only a music tag, no speech
 
 ## CHANGE_LOG
 
 - Cues removed: 1
 - Time removed (merged, non-overlapping): 3.5s
 - Resulting approx. output length: original minus 3.5s
-- Notes: left the first cue's "[музыка]" prefix alone because it also contains real speech
+- Notes: left the first cue's "[music]" prefix alone because it also contains real speech
 ```
 
 No `EDITED_TRANSCRIPT` section — it wasn't asked for. The removed cue's
@@ -353,7 +545,7 @@ prior cuts into your new cumulative list.
 
 ```
 INSTRUCTION:
-<what to remove/change this round>
+<what to remove/change this round — "Mode 2" for the corrected outline, or an editing/duration-target instruction for Mode 3>
 
 TRANSCRIPT:
 <paste the VTT cues here>

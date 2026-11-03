@@ -26,9 +26,15 @@ TARGET_CHUNK_CHARS = 500
 # untouched — only the text that gets turned into speech is cleaned).
 _BRACKETED_TAG_RE = re.compile(r"\[[^\]]*\]")
 
+# ">>" marks a speaker change in auto-captions — transcription notation,
+# not a spoken word, same category as the bracketed tags above.
+_SPEAKER_MARK_RE = re.compile(r">>")
+
 
 def _strip_non_speech_tags(text: str) -> str:
-    return " ".join(_BRACKETED_TAG_RE.sub(" ", text).split())
+    text = _BRACKETED_TAG_RE.sub(" ", text)
+    text = _SPEAKER_MARK_RE.sub(" ", text)
+    return " ".join(text.split())
 
 # When two outline sections heavily overlap (a short "aside" topic squeezed
 # between two bigger ones), resolving the overlap can shrink the short one
@@ -144,21 +150,22 @@ def _leaf_sections(sections: list[OutlineSection]) -> list[OutlineSection]:
 
 def _leaf_index_for_cue(cue: Cue, leaves: list[OutlineSection]) -> int:
     """Leaves are contiguous and non-overlapping (see parser._resolve_
-    overlaps), so every cue overlaps at least one of them. Auto-caption
-    cues sometimes bundle a question and the start of its answer into one
-    cue that straddles a paragraph boundary — assigning by start time alone
-    would put the whole cue wherever it happens to begin, even if most of
-    its span (and content) actually belongs to the next paragraph. Instead,
-    assign to whichever leaf this cue overlaps the most."""
+    overlaps), so every cue start belongs to exactly one of them.
 
-    best_index = 0
-    best_overlap = -1.0
+    This must match the exact convention AI_EDITING_INSTRUCTIONS.md tells
+    Claude to use when it writes each section's own verbatim text: a cue
+    belongs to whichever paragraph its own START falls into (a paragraph's
+    start is inclusive, its end is exclusive). Claude is explicitly
+    instructed to choose boundaries so this assignment lines up with real
+    sentence breaks — using a different rule here (e.g. assigning by which
+    section a cue overlaps *most*) would silently reassign cues Claude
+    already placed correctly, pulling a cue's text into the wrong chunk
+    even though the outline's own text has it right."""
+
     for i, section in enumerate(leaves):
-        overlap = min(cue.end, section.end) - max(cue.start, section.start)
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_index = i
-    return best_index
+        if cue.start < section.end:
+            return i
+    return len(leaves) - 1
 
 
 def chunk_by_outline(kept: list[Cue], outline_sections: list[OutlineSection]) -> list[TextChunk]:
@@ -169,11 +176,18 @@ def chunk_by_outline(kept: list[Cue], outline_sections: list[OutlineSection]) ->
     somewhere instead of silently falling through the gap between two
     neighbors.
 
+    A chunk's spoken/displayed TEXT comes from the outline section's own
+    `body` field, not from re-concatenating the raw cue text — AI_EDITING_
+    INSTRUCTIONS.md permits Claude to correct Whisper mis-transcriptions in
+    the outline body, so the body is the authoritative, possibly-corrected
+    text. Cues are still used to compute `start`/`end`/`slot_duration`
+    (real video timing is independent of whether the text was corrected).
+
     Groups shorter than MIN_CHUNK_CHARS are folded into a neighbor (forward
     where possible, otherwise backward for a trailing short group) so an
     overlap-shrunk section doesn't surface as an orphaned sentence
-    fragment; its title is kept alongside the neighbor's so the merge is
-    visible rather than silent."""
+    fragment; its title/body are kept alongside the neighbor's so the merge
+    is visible rather than silent."""
 
     leaves = _leaf_sections(outline_sections)
     if not leaves:
@@ -184,19 +198,21 @@ def chunk_by_outline(kept: list[Cue], outline_sections: list[OutlineSection]) ->
         buckets[_leaf_index_for_cue(cue, leaves)].append(cue)
 
     groups = [
-        {"titles": [section.title], "cues": cues}
+        {"titles": [section.title], "bodies": [section.body], "cues": cues}
         for section, cues in zip(leaves, buckets)
         if cues
     ]
 
     merged_groups: list[dict] = []
     for index, group in enumerate(groups):
-        text_len = len(_strip_non_speech_tags(" ".join(cue.text for cue in group["cues"])))
+        text_len = len(_strip_non_speech_tags(" ".join(group["bodies"])))
         if text_len < MIN_CHUNK_CHARS and index + 1 < len(groups):
             groups[index + 1]["titles"] = group["titles"] + groups[index + 1]["titles"]
+            groups[index + 1]["bodies"] = group["bodies"] + groups[index + 1]["bodies"]
             groups[index + 1]["cues"] = group["cues"] + groups[index + 1]["cues"]
         elif text_len < MIN_CHUNK_CHARS and merged_groups:
             merged_groups[-1]["titles"] += group["titles"]
+            merged_groups[-1]["bodies"] += group["bodies"]
             merged_groups[-1]["cues"] += group["cues"]
         else:
             merged_groups.append(group)
@@ -205,7 +221,7 @@ def chunk_by_outline(kept: list[Cue], outline_sections: list[OutlineSection]) ->
 
     for group in merged_groups:
         cues = group["cues"]
-        text = _strip_non_speech_tags(" ".join(cue.text for cue in cues))
+        text = _strip_non_speech_tags(" ".join(group["bodies"]))
         if not text:
             continue
 

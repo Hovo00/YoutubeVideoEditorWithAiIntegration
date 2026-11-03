@@ -1,4 +1,6 @@
 fastapi
 uvicorn[standard]
 python-multipart
-anthropic
+piper-tts
+yt-dlp
+openai-whisper

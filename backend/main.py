@@ -17,13 +17,16 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import azure_tts, youtube_ingest
+from . import azure_tts, duration_fit, youtube_ingest
 from .chunker import TextChunk, chunk_by_outline, chunk_kept_cues, kept_cues
 from .editor import Cut, calculate_keep_segments, map_to_output_timeline, normalize_cuts
 from .parser import ParsedResponse, parse_ai_response, parse_outline, parse_vtt
 from .render import FFmpegNotFoundError, get_duration, render_video, render_video_with_audio
 from .tts import KNOWN_VOICES as PIPER_KNOWN_VOICES
 from .tts import VoiceNotAvailableError, list_available_voices, synthesize_to_wav
+
+# Piper voice that predicts Azure durations (calibrated to Azure's pace).
+ESTIMATOR_PIPER_VOICE = "ru_RU-denis-medium"
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MEDIA_DIR = BASE_DIR / "media"
@@ -453,8 +456,8 @@ def _synthesize_chunk(index: int, text: str, voice: str, rate: float = 1.0) -> P
     (paid cloud API, needs AZURE_SPEECH_KEY/REGION) depending on which voice
     was picked, writing the result to workspace/chunk_audio/chunk_{index}.*
 
-    `rate` (a speed multiplier, 1.0 = normal) only applies to Azure voices —
-    Piper has no equivalent control here, so it's ignored for Piper voices."""
+    `rate` is a speed multiplier (1.0 = normal) for both providers: Azure maps
+    it to SSML prosody, Piper to phoneme length + sentence pauses."""
 
     CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     for old in CHUNK_AUDIO_DIR.glob(f"chunk_{index:04d}.*"):
@@ -462,7 +465,7 @@ def _synthesize_chunk(index: int, text: str, voice: str, rate: float = 1.0) -> P
 
     if voice in PIPER_KNOWN_VOICES:
         audio_path = CHUNK_AUDIO_DIR / f"chunk_{index:04d}.wav"
-        synthesize_to_wav(text, voice, str(audio_path))
+        synthesize_to_wav(text, voice, str(audio_path), rate=rate)
     elif voice in azure_tts.KNOWN_VOICES:
         audio_path = CHUNK_AUDIO_DIR / f"chunk_{index:04d}.mp3"
         azure_tts.synthesize_to_file(text, voice, str(audio_path), rate=rate)
@@ -672,74 +675,197 @@ async def render_with_audio(
     return {"status": "started"}
 
 
-def _run_auto_tts(
-    project_id: str,
-    normalized_cuts: list[Cut],
-    keep_segments: list[tuple[float, float]],
-    output_path: Path,
-    voice: str,
-    rate: float = 1.0,
-) -> None:
-    """Mode 2 of the audio-mode combobox: automatically generates a Piper/
-    Azure voice-over for every surviving chunk (no per-chunk review), then
-    renders straight away — i.e. the manual-TTS render path, with the
-    per-chunk generation loop fully automated instead of user-driven."""
+# --- Audio option 2: automatic TTS -----------------------------------------
+#
+# For every chunk: render it with a free local Piper voice to predict its
+# duration, pick the speed (duration_fit.AUTO_RATES) that best fills the
+# chunk's video window, and only then generate the real voice-over. Chunks
+# that can't fit (too long even at the fastest speed, or leaving more than
+# MAX_GAP_SECONDS of silence even at the slowest) are flagged and NOT sent to
+# Azure, which saves characters. If anything is flagged, the run stops in
+# "needs_review": the user edits those chunks (recheck) or accepts them as-is,
+# then continues the render.
 
+_ESTIMATE_PATH_NAME = "_estimate.wav"
+_RESOLVED_STATUSES = ("ok", "accepted")
+
+
+def _estimator_voice(voice: str) -> str | None:
+    """Piper voice used to predict durations. A Piper voice predicts
+    itself. Azure voices use one calibrated Russian Piper voice."""
+    if voice in PIPER_KNOWN_VOICES:
+        return voice
+    available = [v["name"] for v in list_available_voices() if v["name"].startswith("ru_")]
+    if ESTIMATOR_PIPER_VOICE in available:
+        return ESTIMATOR_PIPER_VOICE
+    return available[0] if available else None
+
+
+def _chunk_audio_path(index: int) -> Path | None:
+    matches = [
+        path
+        for path in CHUNK_AUDIO_DIR.glob(f"chunk_{index:04d}.*")
+        if not path.name.startswith("_music")
+    ]
+    return matches[0] if matches else None
+
+
+def _azure_correction(run: dict) -> float:
+    """Median of real-Azure / Piper-predicted durations seen so far in this
+    run. Corrects the prediction for the voice/text at hand, so later chunks
+    need fewer retries."""
+    ratios = sorted(run["ratios"])
+    if not ratios:
+        return 1.0
+    mid = len(ratios) // 2
+    return ratios[mid] if len(ratios) % 2 else (ratios[mid - 1] + ratios[mid]) / 2
+
+
+def _auto_tts_chunk(run: dict, record: dict, force_rate: float | None = None) -> None:
+    """Predict, choose a speed and (if it fits) generate one chunk's
+    voice-over. Updates `record` in place.
+
+    With `force_rate`, skips the prediction and generates at that speed no
+    matter what. That's the "accept anyway" path."""
+    index = record["index"]
+    window = record["slot_duration"]
+    voice = run["voice"]
+    is_azure = voice in azure_tts.KNOWN_VOICES
+
+    for old in CHUNK_AUDIO_DIR.glob(f"chunk_{index:04d}.*"):
+        old.unlink()
+    record.update(audio_duration=None, has_audio=False, message=None)
+
+    if force_rate is None:
+        estimator = _estimator_voice(voice)
+        if estimator is None:
+            # Nothing to predict with: just generate at normal speed.
+            choice = duration_fit.RateChoice(1.0, 0.0, "ok")
+        else:
+            CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+            estimate_path = CHUNK_AUDIO_DIR / _ESTIMATE_PATH_NAME
+            synthesize_to_wav(record["text"], estimator, str(estimate_path), rate=1.0)
+            duration_1x = get_duration(str(estimate_path))
+            estimate_path.unlink(missing_ok=True)
+            if is_azure:
+                duration_1x *= _azure_correction(run)
+            choice = duration_fit.choose_rate(duration_1x, window, voice if is_azure else None)
+
+        record.update(rate=choice.rate, estimate=choice.estimate)
+        if choice.verdict != "ok":
+            record["status"] = choice.verdict
+            return
+        rate = choice.rate
+    else:
+        rate = force_rate
+        record.update(rate=rate, estimate=None)
+
+    def generate(at_rate: float) -> float:
+        audio_path = _synthesize_chunk(index, record["text"], voice, rate=at_rate)
+        if is_azure:
+            run["azure_chars"] += len(record["text"])
+        return get_duration(str(audio_path))
+
+    audio_duration = generate(rate)
+    if is_azure and record.get("estimate"):
+        run["ratios"].append(audio_duration / record["estimate"])
+
+    verdict = duration_fit.judge_actual(audio_duration, window)
+    if verdict == "too_long" and force_rate is None:
+        faster = duration_fit.next_faster_rate(rate)
+        if faster is not None:
+            rate = faster
+            record["rate"] = rate
+            audio_duration = generate(rate)
+            verdict = duration_fit.judge_actual(audio_duration, window)
+
+    record.update(audio_duration=audio_duration, has_audio=True)
+    record["status"] = "accepted" if force_rate is not None else verdict
+
+
+def _auto_tts_overlays(run: dict) -> list[tuple[float, str]]:
+    overlays = []
+    for record in run["chunks"]:
+        audio_path = _chunk_audio_path(record["index"])
+        if audio_path is None:
+            continue
+        output_start = map_to_output_timeline(record["start"], run["keep_segments"])
+        overlays.append((output_start, str(audio_path)))
+    return overlays
+
+
+def _auto_tts_render(project_id: str) -> None:
     project = PROJECTS[project_id]
+    run = project["auto_tts"]
     try:
-        chunks, _, _, _ = _build_voice_chunks(project, normalized_cuts)
-        total = len(chunks)
-
-        for index, chunk in enumerate(chunks):
-            project["status"] = "generating_voiceover"
-            project["phase"] = "generating_voiceover"
-            project["phase_message"] = f"Generating voice-over… chunk {index + 1}/{total}"
-            project["progress"] = index / total if total else 0.0
-            _synthesize_chunk(index, chunk.text, voice, rate=rate)
-
-        voice_overlays: list[tuple[float, str]] = []
-        for index, chunk in enumerate(chunks):
-            matches = [
-                path
-                for path in CHUNK_AUDIO_DIR.glob(f"chunk_{index:04d}.*")
-                if not path.name.startswith("_music")
-            ]
-            if not matches:
-                continue
-            output_start = map_to_output_timeline(chunk.start, keep_segments)
-            voice_overlays.append((output_start, str(matches[0])))
-
         project["status"] = "rendering"
         project["phase"] = "rendering"
         project["phase_message"] = "Rendering video…"
         render_video_with_audio(
-            project["video_path"], str(output_path), keep_segments, False, voice_overlays
+            project["video_path"],
+            str(run["output_path"]),
+            run["keep_segments"],
+            False,
+            _auto_tts_overlays(run),
         )
-
         project["status"] = "done"
         project["phase"] = "done"
         project["progress"] = 1.0
-        project["output_path"] = str(output_path)
+        project["output_path"] = str(run["output_path"])
     except Exception as exc:
         project["status"] = "error"
         project["error"] = str(exc)
 
 
+def _run_auto_tts(project_id: str) -> None:
+    project = PROJECTS[project_id]
+    run = project["auto_tts"]
+    try:
+        total = len(run["chunks"])
+        for position, record in enumerate(run["chunks"]):
+            project["status"] = "generating_voiceover"
+            project["phase"] = "generating_voiceover"
+            project["phase_message"] = f"Generating voice-over… chunk {position + 1}/{total}"
+            project["progress"] = position / total if total else 0.0
+            _auto_tts_chunk(run, record)
+
+        if any(r["status"] not in _RESOLVED_STATUSES for r in run["chunks"]):
+            project["status"] = "needs_review"
+            project["phase"] = "needs_review"
+            project["phase_message"] = ""
+            return
+    except Exception as exc:
+        project["status"] = "error"
+        project["error"] = str(exc)
+        return
+
+    _auto_tts_render(project_id)
+
+
+def _public_auto_tts(run: dict) -> dict:
+    return {
+        "voice": run["voice"],
+        "azure_chars": run["azure_chars"],
+        "max_gap_seconds": duration_fit.MAX_GAP_SECONDS,
+        "chunks": run["chunks"],
+    }
+
+
 @app.post("/api/auto-tts")
-async def auto_tts(
+def auto_tts(
     project_id: str = Form(...),
     cuts_json: str = Form(...),
     voice: str = Form(...),
-    rate: float = Form(1.0),
 ):
-    """Audio Option 2 — automatic TTS: batch-generates a voice-over for
-    every chunk with one default voice and no per-chunk review, then
-    renders. A real but minimal first implementation, to be developed
-    further later."""
+    """Audio Option 2: automatic TTS. Generates every chunk's voice-over
+    with an automatically chosen speed, then renders. If some chunks can't
+    fit, it stops in "needs_review" (see /api/auto-tts/review)."""
     project = _get_project(project_id)
 
     if not project.get("vtt_text"):
         raise HTTPException(400, "No transcript yet for this project.")
+    if voice not in PIPER_KNOWN_VOICES and voice not in azure_tts.KNOWN_VOICES:
+        raise HTTPException(400, f"Unknown voice: {voice}")
 
     try:
         raw_cuts = json.loads(cuts_json)
@@ -753,19 +879,113 @@ async def auto_tts(
     if not keep_segments:
         raise HTTPException(400, "Every segment was cut — nothing would be left to render.")
 
-    output_name = f"{project_id}_edited.mp4"
-    output_path = OUTPUT_DIR / output_name
+    chunks, _, _, _ = _build_voice_chunks(project, normalized)
 
+    # Clear audio left from earlier runs, so a stale file can't be overlaid.
+    if CHUNK_AUDIO_DIR.exists():
+        for old in CHUNK_AUDIO_DIR.glob("chunk_*"):
+            old.unlink()
+
+    project["auto_tts"] = {
+        "voice": voice,
+        "keep_segments": keep_segments,
+        "output_path": OUTPUT_DIR / f"{project_id}_edited.mp4",
+        "ratios": [],
+        "azure_chars": 0,
+        "chunks": [
+            {
+                "index": index,
+                "title": chunk.title,
+                "text": chunk.text,
+                "start": chunk.start,
+                "end": chunk.end,
+                "slot_duration": chunk.slot_duration,
+                "status": "pending",
+                "rate": None,
+                "estimate": None,
+                "audio_duration": None,
+                "has_audio": False,
+            }
+            for index, chunk in enumerate(chunks)
+        ],
+    }
     project["status"] = "generating_voiceover"
     project["error"] = None
 
-    thread = threading.Thread(
-        target=_run_auto_tts,
-        args=(project_id, normalized, keep_segments, output_path, voice, rate),
-        daemon=True,
-    )
-    thread.start()
+    threading.Thread(target=_run_auto_tts, args=(project_id,), daemon=True).start()
+    return {"status": "started"}
 
+
+def _get_auto_tts_run(project_id: str) -> tuple[dict, dict]:
+    project = _get_project(project_id)
+    run = project.get("auto_tts")
+    if not run:
+        raise HTTPException(404, "No automatic voice-over run for this project.")
+    return project, run
+
+
+def _get_auto_tts_record(run: dict, chunk_index: int) -> dict:
+    if not 0 <= chunk_index < len(run["chunks"]):
+        raise HTTPException(404, "No such chunk.")
+    return run["chunks"][chunk_index]
+
+
+def _call_tts(fn, *args, **kwargs) -> None:
+    try:
+        fn(*args, **kwargs)
+    except VoiceNotAvailableError as exc:
+        raise HTTPException(400, str(exc))
+    except azure_tts.AzureNotConfiguredError as exc:
+        raise HTTPException(400, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc))
+
+
+@app.get("/api/auto-tts/review")
+def auto_tts_review(project_id: str):
+    _, run = _get_auto_tts_run(project_id)
+    return _public_auto_tts(run)
+
+
+@app.post("/api/auto-tts/recheck")
+def auto_tts_recheck(project_id: str = Form(...), chunk_index: int = Form(...), text: str = Form(...)):
+    """Edited text for a flagged chunk: predict again for free, and spend
+    Azure characters only if it now fits."""
+    _, run = _get_auto_tts_run(project_id)
+    record = _get_auto_tts_record(run, chunk_index)
+    record["text"] = text
+    _call_tts(_auto_tts_chunk, run, record)
+    return {"chunk": record, "azure_chars": run["azure_chars"]}
+
+
+@app.post("/api/auto-tts/accept")
+def auto_tts_accept(project_id: str = Form(...), chunk_index: int = Form(...), text: str = Form(...)):
+    """Keep a flagged chunk as it is. If it has no audio yet (it was
+    flagged from the prediction), generate it now at the closest speed
+    (fastest when too long, slowest when too short). A too-long voice-over
+    is cut off at the end of its window in the final video."""
+    _, run = _get_auto_tts_run(project_id)
+    record = _get_auto_tts_record(run, chunk_index)
+
+    if record["has_audio"] and record["text"] == text:
+        record["status"] = "accepted"
+    else:
+        record["text"] = text
+        rate = max(duration_fit.AUTO_RATES) if record["status"] == "too_long" else min(duration_fit.AUTO_RATES)
+        _call_tts(_auto_tts_chunk, run, record, force_rate=rate)
+    return {"chunk": record, "azure_chars": run["azure_chars"]}
+
+
+@app.post("/api/auto-tts/continue")
+def auto_tts_continue(project_id: str = Form(...)):
+    project, run = _get_auto_tts_run(project_id)
+    unresolved = [r["index"] + 1 for r in run["chunks"] if r["status"] not in _RESOLVED_STATUSES]
+    if unresolved:
+        raise HTTPException(400, f"Chunks still need attention: {', '.join(map(str, unresolved))}")
+
+    project["status"] = "rendering"
+    project["error"] = None
+    threading.Thread(target=_auto_tts_render, args=(project_id,), daemon=True).start()
     return {"status": "started"}
 
 

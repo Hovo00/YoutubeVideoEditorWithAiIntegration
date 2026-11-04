@@ -18,8 +18,10 @@ Edit a video by editing its transcript text, instead of a timeline.
      which decides what to cut and writes `workspace/cuts.md`. Load it.
 3. Review the resulting cuts (toggle any on/off), then choose one of three audio modes:
    - **Original audio** — just cut, keep the real audio.
-   - **Automatic TTS** — generates a Piper voice-over for every chunk automatically (a
-     minimal first version; to be improved later).
+   - **Automatic TTS** — generates a Piper or Azure voice-over for every chunk, picking a
+     speed (0.9x–1.1x) per chunk so it fills its window. Each chunk is first measured with
+     a free Piper voice, so chunks that can't fit (too long, or leaving more than 5 s of
+     silence) are listed for you to edit or accept before rendering, and never sent to Azure.
    - **Manual TTS** — review/edit/generate or upload a voice-over per chunk yourself.
 4. Render and download.
 
@@ -87,7 +89,10 @@ yt-dlp download + Whisper transcription (background job, polled)
   so hundreds of tiny cuts stay in sync), plus the custom-audio-mix render used by the TTS
   audio modes.
 - `backend/tts.py` / `backend/azure_tts.py` — Piper (local, free) and Azure AI Speech
-  (cloud, paid) text-to-speech backends.
+  (cloud, paid) text-to-speech backends. `backend/duration_fit.py` picks the automatic
+  TTS speed. Piper voices are calibrated so 1.0x lasts as long as Azure Dmitry at 1.0x
+  (`tts_calibration.json`; regenerate with `.venv/bin/python scripts/calibrate_tts.py`,
+  which spends ~5,250 Azure characters).
 - `backend/main.py` — FastAPI app serving both the API and the static frontend
   (`frontend/`).
 - `run.py` — single entry point: starts the server and opens the browser.

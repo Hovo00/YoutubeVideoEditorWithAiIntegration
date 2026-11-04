@@ -324,3 +324,7 @@ td.time {
   height: 32px;
   margin-top: 6px;
 }
+
+.chunk-card.flagged {
+  border-left-color: #e55;
+}

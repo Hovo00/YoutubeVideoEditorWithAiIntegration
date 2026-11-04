@@ -183,16 +183,19 @@
 
       <div id="audioModeAuto" style="display:none">
         <p class="muted" data-i18n="auto_tts_desc">
-          Generates a Piper voice-over for every surviving chunk automatically (no
-          per-chunk review) and renders straight away. A real but minimal first version —
-          use Manual TTS below if you want to review/fix chunks individually.
+          Generates a voice-over for every chunk with the speed picked automatically to fill
+          each chunk's window, then renders.
         </p>
         <div class="row">
           <select id="autoTtsVoiceSelect"></select>
-          <label for="autoTtsRateRange" data-i18n="tts_speed_label">Speed:</label>
-          <input type="range" id="autoTtsRateRange" min="0.5" max="1.5" step="0.05" value="1.0" />
-          <span id="autoTtsRateValue">1.00x</span>
           <button id="autoTtsBtn" data-i18n="auto_tts_button">Generate voice-over automatically &amp; render</button>
+        </div>
+        <div id="autoTtsReview" style="display:none">
+          <div id="autoTtsReviewSummary" class="muted"></div>
+          <div id="autoTtsReviewChunks"></div>
+          <div class="row">
+            <button id="autoTtsContinueBtn" data-i18n="auto_tts_continue_button">Continue render</button>
+          </div>
         </div>
       </div>
 

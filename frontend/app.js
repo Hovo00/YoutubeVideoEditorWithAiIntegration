@@ -574,10 +574,6 @@ document.getElementById("audioModeSelect").addEventListener("change", (e) => {
   showAudioMode(e.target.value);
 });
 
-document.getElementById("autoTtsRateRange").addEventListener("input", (e) => {
-  document.getElementById("autoTtsRateValue").textContent = `${Number(e.target.value).toFixed(2)}x`;
-});
-
 async function ensureTtsVoicesLoaded() {
   if (state.ttsVoices.length === 0) {
     const response = await fetch("/api/tts/voices");
@@ -591,15 +587,6 @@ async function ensureTtsVoicesLoaded() {
   return state.ttsVoices;
 }
 
-function updateAutoTtsRateVisibility() {
-  const select = document.getElementById("autoTtsVoiceSelect");
-  const provider = select.selectedOptions[0]?.dataset.provider;
-  const show = provider === "azure" ? "" : "none";
-  document.getElementById("autoTtsRateRange").style.display = show;
-  document.getElementById("autoTtsRateValue").style.display = show;
-  document.querySelector('label[for="autoTtsRateRange"]').style.display = show;
-}
-
 function populateAutoTtsVoiceSelect() {
   const select = document.getElementById("autoTtsVoiceSelect");
   if (select.options.length === 0) {
@@ -610,9 +597,7 @@ function populateAutoTtsVoiceSelect() {
       option.dataset.provider = voice.provider;
       select.appendChild(option);
     }
-    select.addEventListener("change", updateAutoTtsRateVisibility);
   }
-  updateAutoTtsRateVisibility();
 }
 
 // --- Audio option 1: original audio (plain render) ------------------------
@@ -662,8 +647,6 @@ document.getElementById("autoTtsBtn").addEventListener("click", async () => {
     return;
   }
 
-  const rate = document.getElementById("autoTtsRateRange").value;
-
   const formData = new FormData();
   formData.append("project_id", state.projectId);
   formData.append(
@@ -671,8 +654,8 @@ document.getElementById("autoTtsBtn").addEventListener("click", async () => {
     JSON.stringify(enabledCuts.map((c) => ({ start: c.start, end: c.end })))
   );
   formData.append("voice", voice);
-  formData.append("rate", rate);
 
+  document.getElementById("autoTtsReview").style.display = "none";
   const statusEl = document.getElementById("renderStatus");
   statusEl.textContent = t("auto_tts_status_starting");
 
@@ -684,6 +667,173 @@ document.getElementById("autoTtsBtn").addEventListener("click", async () => {
     return;
   }
 
+  pollRenderStatus();
+});
+
+// Chunks the automatic run flagged (too long, or too much silence left).
+// Durations are seconds; `estimate` is the free Piper prediction, set when the
+// chunk was flagged before any (paid) audio was generated.
+
+// When suggesting how much text to add, aim for this much silence: inside
+// the allowed gap, not at its very edge.
+const AUTO_TTS_TARGET_GAP_SECONDS = 2.5;
+const AUTO_TTS_FIT_MARGIN_SECONDS = 0.3; // + 1.5% of the window, as in backend/duration_fit.py
+
+function autoTtsChunkMessage(chunk, maxGap) {
+  const slot = chunk.slot_duration;
+  const duration = chunk.has_audio ? chunk.audio_duration : chunk.estimate;
+  const vars = {
+    slot: slot.toFixed(1),
+    rate: chunk.rate != null ? chunk.rate.toFixed(2) : "1.00",
+    est: chunk.estimate != null ? chunk.estimate.toFixed(1) : "?",
+    audio: chunk.audio_duration != null ? chunk.audio_duration.toFixed(1) : "?",
+  };
+  const len = chunk.text.length;
+
+  if (chunk.status === "too_long") {
+    const target = slot - AUTO_TTS_FIT_MARGIN_SECONDS - 0.015 * slot;
+    vars.chars = Math.max(1, Math.ceil(len * (1 - target / duration)));
+    vars.over = (duration - slot).toFixed(1);
+    return t(chunk.has_audio ? "auto_tts_flag_too_long_audio" : "auto_tts_flag_too_long_estimate", vars);
+  }
+  if (chunk.status === "too_short") {
+    const target = slot - Math.min(AUTO_TTS_TARGET_GAP_SECONDS, maxGap);
+    vars.chars = Math.max(1, Math.ceil(len * (target / duration - 1)));
+    vars.gap = (slot - duration).toFixed(1);
+    return t(chunk.has_audio ? "auto_tts_flag_too_short_audio" : "auto_tts_flag_too_short_estimate", vars);
+  }
+  if (chunk.status === "accepted") return t("auto_tts_chunk_accepted", vars);
+  return t("auto_tts_chunk_ok", vars);
+}
+
+async function loadAutoTtsReview() {
+  const response = await fetch(`/api/auto-tts/review?project_id=${encodeURIComponent(state.projectId)}`);
+  if (!response.ok) return;
+  state.autoTtsReview = await response.json();
+  // Flagged chunks stay listed even after they're fixed, so the user can
+  // see what they changed.
+  state.autoTtsReviewIndices = state.autoTtsReview.chunks
+    .filter((c) => c.status !== "ok")
+    .map((c) => c.index);
+  renderAutoTtsReview();
+}
+
+function renderAutoTtsReview() {
+  const review = state.autoTtsReview;
+  const listEl = document.getElementById("autoTtsReviewChunks");
+  const summaryEl = document.getElementById("autoTtsReviewSummary");
+
+  const total = review.chunks.length;
+  const bad = review.chunks.filter((c) => c.status !== "ok" && c.status !== "accepted").length;
+  const chars = review.azure_chars.toLocaleString();
+  summaryEl.textContent =
+    bad > 0 ? t("auto_tts_review_summary", { bad, total, chars }) : t("auto_tts_review_all_ok", { total, chars });
+  document.getElementById("autoTtsContinueBtn").disabled = bad > 0;
+
+  listEl.innerHTML = "";
+  for (const index of state.autoTtsReviewIndices) {
+    listEl.appendChild(renderAutoTtsReviewCard(review.chunks[index], review.max_gap_seconds));
+  }
+  document.getElementById("autoTtsReview").style.display = "block";
+}
+
+function renderAutoTtsReviewCard(chunk, maxGap) {
+  const card = document.createElement("div");
+  const resolved = chunk.status === "ok" || chunk.status === "accepted";
+  card.className = resolved ? "chunk-card" : "chunk-card flagged";
+
+  const head = document.createElement("div");
+  head.className = "chunk-head";
+  const indexEl = document.createElement("span");
+  indexEl.className = "chunk-index";
+  indexEl.textContent = chunk.title || t("chunk_label", { n: chunk.index + 1 });
+  const timeEl = document.createElement("span");
+  timeEl.className = "chunk-time";
+  timeEl.textContent = `${formatTime(chunk.start)} - ${formatTime(chunk.end)}`;
+  const slotEl = document.createElement("span");
+  slotEl.className = "chunk-slot";
+  slotEl.textContent = t("slot_label", { duration: chunk.slot_duration.toFixed(1) });
+  const charsEl = document.createElement("span");
+  charsEl.className = "chunk-slot";
+  head.append(indexEl, timeEl, slotEl, charsEl);
+
+  const textEl = document.createElement("textarea");
+  textEl.className = "chunk-text-input";
+  textEl.value = chunk.text;
+  textEl.rows = Math.min(10, Math.max(3, Math.ceil(chunk.text.length / 80)));
+  const updateChars = () => (charsEl.textContent = t("auto_tts_chars", { n: textEl.value.length }));
+  updateChars();
+  textEl.addEventListener("input", updateChars);
+
+  const statusEl = document.createElement("div");
+  statusEl.className = resolved ? "muted chunk-audio-status" : "muted chunk-audio-status warning";
+  statusEl.textContent = autoTtsChunkMessage(chunk, maxGap);
+
+  const row = document.createElement("div");
+  row.className = "row";
+  const recheckBtn = document.createElement("button");
+  recheckBtn.textContent = t("auto_tts_recheck_button");
+  const acceptBtn = document.createElement("button");
+  acceptBtn.textContent = t("auto_tts_accept_button");
+  acceptBtn.style.display = resolved ? "none" : "";
+  row.append(recheckBtn, acceptBtn);
+
+  async function submit(endpoint) {
+    recheckBtn.disabled = acceptBtn.disabled = true;
+    statusEl.textContent = t("auto_tts_checking");
+    statusEl.classList.remove("warning");
+
+    const formData = new FormData();
+    formData.append("project_id", state.projectId);
+    formData.append("chunk_index", String(chunk.index));
+    formData.append("text", textEl.value);
+
+    try {
+      const response = await fetch(endpoint, { method: "POST", body: formData });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        statusEl.textContent = t("audio_status_generation_failed", { detail: err.detail || response.statusText });
+        statusEl.classList.add("warning");
+        return;
+      }
+      const data = await response.json();
+      state.autoTtsReview.chunks[chunk.index] = data.chunk;
+      state.autoTtsReview.azure_chars = data.azure_chars;
+      renderAutoTtsReview();
+      if (state.ttsVoices.some((v) => v.provider === "azure")) refreshAzureUsage();
+    } finally {
+      recheckBtn.disabled = acceptBtn.disabled = false;
+    }
+  }
+
+  recheckBtn.addEventListener("click", () => submit("/api/auto-tts/recheck"));
+  acceptBtn.addEventListener("click", () => submit("/api/auto-tts/accept"));
+
+  card.append(head, textEl, statusEl, row);
+
+  if (chunk.has_audio) {
+    const audioPlayer = document.createElement("audio");
+    audioPlayer.controls = true;
+    audioPlayer.className = "chunk-audio-player";
+    audioPlayer.src = `/api/transcript-chunks/audio/${chunk.index}?t=${Date.now()}`;
+    card.append(audioPlayer);
+  }
+  return card;
+}
+
+document.getElementById("autoTtsContinueBtn").addEventListener("click", async () => {
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+
+  const statusEl = document.getElementById("renderStatus");
+  const response = await fetch("/api/auto-tts/continue", { method: "POST", body: formData });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    statusEl.textContent = t("render_status_failed_start", { detail: err.detail || response.statusText });
+    return;
+  }
+  document.getElementById("autoTtsReview").style.display = "none";
+  statusEl.textContent = t("render_status_starting");
   pollRenderStatus();
 });
 
@@ -888,7 +1038,7 @@ function renderChunks() {
 
       function updateRateControlVisibility() {
         const provider = voiceSelect.selectedOptions[0]?.dataset.provider;
-        const show = provider === "azure" ? "" : "none";
+        const show = provider ? "" : "none";
         rateLabel.style.display = show;
         rateRange.style.display = show;
         rateValue.style.display = show;
@@ -1021,6 +1171,13 @@ function pollRenderStatus() {
       // Automatic TTS can burn through Azure quota in one batch with no
       // per-chunk checkpoint to refresh it at — catch up once the render
       // (and any voice-over generation before it) has actually finished.
+      if (state.ttsVoices.some((v) => v.provider === "azure")) {
+        refreshAzureUsage();
+      }
+    } else if (data.status === "needs_review") {
+      clearInterval(state.pollTimer);
+      statusEl.textContent = t("auto_tts_unresolved");
+      await loadAutoTtsReview();
       if (state.ttsVoices.some((v) => v.provider === "azure")) {
         refreshAzureUsage();
       }

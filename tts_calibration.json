@@ -1,0 +1,18 @@
+{
+  "azure_durations": {
+    "ru-RU-DmitryNeural": {
+      "0.90": 146.472,
+      "0.95": 139.152,
+      "1.00": 131.832,
+      "1.05": 125.832,
+      "1.10": 119.832
+    }
+  },
+  "piper_pace": {
+    "ru_RU-irina-medium": 0.8051,
+    "ru_RU-dmitri-medium": 1.2774,
+    "ru_RU-denis-medium": 1.0703,
+    "ru_RU-ruslan-medium": 1.1441
+  },
+  "calibration_text_chars": 1750
+}

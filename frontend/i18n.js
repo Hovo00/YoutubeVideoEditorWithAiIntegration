@@ -132,11 +132,39 @@ const TRANSLATIONS = {
     render_status_failed_start: "Render failed to start: {detail}",
 
     auto_tts_desc:
-      "Generates a voice-over for every surviving chunk automatically using the voice " +
-      "you pick below — Piper (free, local) or, if configured, Azure (paid, higher " +
-      "quality) — with no per-chunk review, then renders straight away. A real but " +
-      "minimal first version — use Manual TTS below if you want to review/fix chunks " +
-      "individually.",
+      "Generates a voice-over for every chunk with the voice you pick below — Piper " +
+      "(free, local) or, if configured, Azure (paid, higher quality). The speed " +
+      "(0.9x–1.1x) is picked automatically per chunk so the voice-over fills its " +
+      "window. For Azure, each chunk is first measured with a free Piper voice, so " +
+      "chunks that can't fit are never sent to Azure. Chunks that are too long, or " +
+      "would leave more than 5 seconds of silence, are listed for you to fix before " +
+      "the render continues.",
+    auto_tts_review_summary:
+      "{bad} of {total} chunk(s) need attention. The others are ready. " +
+      "Edit the text and click Recheck (free check first; Azure only runs once it fits), " +
+      "or Accept anyway. Then Continue render. Azure characters used in this run: {chars}.",
+    auto_tts_review_all_ok:
+      "All {total} chunk(s) are ready. Azure characters used in this run: {chars}.",
+    auto_tts_continue_button: "Continue render",
+    auto_tts_recheck_button: "Recheck",
+    auto_tts_accept_button: "Accept anyway",
+    auto_tts_checking: "Checking...",
+    auto_tts_chars: "{n} characters",
+    auto_tts_flag_too_long_estimate:
+      "Too long — predicted {est}s even at {rate}x, but the window is {slot}s. " +
+      "Cut about {chars} characters.",
+    auto_tts_flag_too_long_audio:
+      "Too long — the voice-over is {audio}s at {rate}x, but the window is {slot}s " +
+      "({over}s over). Cut about {chars} characters, or accept it and it will be cut off.",
+    auto_tts_flag_too_short_estimate:
+      "Too short — predicted {est}s even at {rate}x, which leaves {gap}s of silence in the " +
+      "{slot}s window. Add about {chars} characters.",
+    auto_tts_flag_too_short_audio:
+      "Too short — the voice-over is {audio}s at {rate}x, which leaves {gap}s of silence " +
+      "in the {slot}s window. Add about {chars} characters, or accept it.",
+    auto_tts_chunk_ok: "Fits — {audio}s at {rate}x, window {slot}s.",
+    auto_tts_chunk_accepted: "Accepted as-is — {audio}s at {rate}x, window {slot}s.",
+    auto_tts_unresolved: "Some chunks still need attention.",
     auto_tts_button: "Generate voice-over automatically & render",
     tts_speed_label: "Speed:",
     alert_no_voices:
@@ -323,11 +351,40 @@ const TRANSLATIONS = {
     render_status_failed_start: "Не удалось запустить рендер: {detail}",
 
     auto_tts_desc:
-      "Автоматически генерирует озвучку для каждого оставшегося фрагмента выбранным ниже " +
-      "голосом — Piper (бесплатно, локально) или, если настроен, Azure (платно, выше " +
-      "качество) — без проверки по отдельности, и сразу рендерит. Реальная, но минимальная " +
-      "первая версия — используйте ручную озвучку ниже, если хотите проверять/исправлять " +
-      "фрагменты по одному.",
+      "Генерирует озвучку для каждого фрагмента выбранным ниже голосом — Piper " +
+      "(бесплатно, локально) или, если настроен, Azure (платно, выше качество). " +
+      "Скорость (0.9x–1.1x) подбирается автоматически для каждого фрагмента, чтобы " +
+      "озвучка заполнила своё окно. Для Azure каждый фрагмент сначала измеряется " +
+      "бесплатным голосом Piper, поэтому фрагменты, которые не помещаются, в Azure не " +
+      "отправляются. Слишком длинные фрагменты, а также оставляющие больше 5 секунд " +
+      "тишины, показываются для исправления до продолжения рендера.",
+    auto_tts_review_summary:
+      "{bad} из {total} фрагмент(ов) требуют внимания, остальные готовы. Отредактируйте " +
+      "текст и нажмите «Проверить» (сначала бесплатная проверка, Azure — только когда " +
+      "помещается) или «Принять как есть». Затем «Продолжить рендер». Символов Azure за " +
+      "этот запуск: {chars}.",
+    auto_tts_review_all_ok:
+      "Все {total} фрагмент(ов) готовы. Символов Azure за этот запуск: {chars}.",
+    auto_tts_continue_button: "Продолжить рендер",
+    auto_tts_recheck_button: "Проверить",
+    auto_tts_accept_button: "Принять как есть",
+    auto_tts_checking: "Проверка...",
+    auto_tts_chars: "{n} символов",
+    auto_tts_flag_too_long_estimate:
+      "Слишком длинно — прогноз {est} с даже на {rate}x, а окно {slot} с. " +
+      "Сократите примерно на {chars} символов.",
+    auto_tts_flag_too_long_audio:
+      "Слишком длинно — озвучка {audio} с на {rate}x, а окно {slot} с (превышение на " +
+      "{over} с). Сократите примерно на {chars} символов или примите — конец будет обрезан.",
+    auto_tts_flag_too_short_estimate:
+      "Слишком коротко — прогноз {est} с даже на {rate}x, остаётся {gap} с тишины в окне " +
+      "{slot} с. Добавьте примерно {chars} символов.",
+    auto_tts_flag_too_short_audio:
+      "Слишком коротко — озвучка {audio} с на {rate}x, остаётся {gap} с тишины в окне " +
+      "{slot} с. Добавьте примерно {chars} символов или примите.",
+    auto_tts_chunk_ok: "Подходит — {audio} с на {rate}x, окно {slot} с.",
+    auto_tts_chunk_accepted: "Принято как есть — {audio} с на {rate}x, окно {slot} с.",
+    auto_tts_unresolved: "Некоторые фрагменты всё ещё требуют внимания.",
     auto_tts_button: "Сгенерировать озвучку автоматически и отрендерить",
     tts_speed_label: "Скорость:",
     alert_no_voices:

@@ -30,11 +30,22 @@ _BRACKETED_TAG_RE = re.compile(r"\[[^\]]*\]")
 # not a spoken word, same category as the bracketed tags above.
 _SPEAKER_MARK_RE = re.compile(r">>")
 
+# Mode 2's review markers (AI_EDITING_INSTRUCTIONS.md, "Correcting Whisper
+# errors"): `{corrected: Whisper heard "X"}` follows already-corrected text,
+# so the note itself is dropped; `[unclear: X]` keeps Whisper's own words
+# rather than leaving a hole mid-sentence. Handled before the generic `[...]`
+# stripping above, which would otherwise delete the unclear words too.
+_CORRECTED_NOTE_RE = re.compile(r"\{\s*corrected:[^}]*\}", re.IGNORECASE)
+_UNCLEAR_RE = re.compile(r"\[\s*unclear:\s*([^\]]*)\]", re.IGNORECASE)
+
 
 def _strip_non_speech_tags(text: str) -> str:
+    text = _CORRECTED_NOTE_RE.sub(" ", text)
+    text = _UNCLEAR_RE.sub(r" \1 ", text)
     text = _BRACKETED_TAG_RE.sub(" ", text)
     text = _SPEAKER_MARK_RE.sub(" ", text)
-    return " ".join(text.split())
+    text = " ".join(text.split())
+    return re.sub(r" ([,.!?;:])", r"\1", text)
 
 # When two outline sections heavily overlap (a short "aside" topic squeezed
 # between two bigger ones), resolving the overlap can shrink the short one

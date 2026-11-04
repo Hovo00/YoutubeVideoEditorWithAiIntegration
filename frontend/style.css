@@ -27,6 +27,50 @@ header p {
   color: #aaa;
 }
 
+.header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.settings-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.settings-btn {
+  background: #1b1b1b;
+  border: 1px solid #333;
+  font-size: 1.2em;
+  line-height: 1;
+  padding: 10px 12px;
+}
+
+.settings-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  background: #1b1b1b;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 14px 16px;
+  min-width: 220px;
+  z-index: 10;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.settings-panel label {
+  display: block;
+  color: #999;
+  font-size: 0.9em;
+  margin-bottom: 6px;
+}
+
+.settings-panel select {
+  width: 100%;
+}
+
 .step {
   background: #1b1b1b;
   border-radius: 8px;

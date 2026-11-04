@@ -78,7 +78,12 @@ def list_available_voices() -> list[dict]:
     return [{"name": name, "label": label} for name, label in KNOWN_VOICES.items()]
 
 
-def synthesize_to_file(text: str, voice_name: str, output_path: str) -> None:
+def synthesize_to_file(text: str, voice_name: str, output_path: str, rate: float = 1.0) -> None:
+    """`rate` is a multiplier on the voice's default speaking rate (passed
+    straight through to SSML's <prosody rate="..."> — 1.0 is normal speed,
+    0.5 is half speed, 1.5 is 50% faster). It also scales the natural pauses
+    between words/phrases proportionally, since those are part of the same
+    prosody timing Azure controls with this attribute."""
     api_key = os.environ.get("AZURE_SPEECH_KEY")
     region = os.environ.get("AZURE_SPEECH_REGION")
     if not api_key or not region:
@@ -90,7 +95,9 @@ def synthesize_to_file(text: str, voice_name: str, output_path: str) -> None:
 
     ssml = (
         '<speak version="1.0" xml:lang="ru-RU">'
-        f'<voice name="{voice_name}">{escape(text)}</voice>'
+        f'<voice name="{voice_name}">'
+        f'<prosody rate="{rate}">{escape(text)}</prosody>'
+        "</voice>"
         "</speak>"
     )
 

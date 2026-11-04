@@ -25,6 +25,26 @@ function showStep(id) {
   document.getElementById(id).style.display = "block";
 }
 
+// --- Settings (interface language — cosmetic only, see i18n.js) -----------
+
+document.getElementById("uiLangSelect").value = getUiLanguage();
+
+document.getElementById("settingsBtn").addEventListener("click", () => {
+  const panel = document.getElementById("settingsPanel");
+  panel.style.display = panel.style.display === "none" ? "block" : "none";
+});
+
+document.addEventListener("click", (e) => {
+  const wrap = document.querySelector(".settings-wrap");
+  if (wrap && !wrap.contains(e.target)) {
+    document.getElementById("settingsPanel").style.display = "none";
+  }
+});
+
+document.getElementById("uiLangSelect").addEventListener("change", (e) => {
+  setUiLanguage(e.target.value);
+});
+
 // --- Session persistence (survive a page reload without re-ingesting, ----
 // which would otherwise wipe workspace/outline.md and cuts.md) -----------
 
@@ -57,13 +77,13 @@ function restoreSession() {
     preview.src = "/api/workspace/video";
     preview.style.display = "block";
     document.getElementById("videoInfo").textContent =
-      `Restored previous session — duration ${formatTime(saved.duration)}`;
+      t("video_info_restored", { duration: formatTime(saved.duration) });
     showStep("stepEditMode");
     showEditMode(document.getElementById("editModeSelect").value);
   } else {
     // Ingestion was still in progress when the page was last open — resume
     // polling rather than assuming a workspace video already exists.
-    document.getElementById("ingestStatus").textContent = "Resuming previous session...";
+    document.getElementById("ingestStatus").textContent = t("ingest_status_resuming");
     pollIngestStatus();
   }
 }
@@ -74,13 +94,18 @@ document.getElementById("ingestBtn").addEventListener("click", async () => {
   const urlInput = document.getElementById("youtubeUrlInput");
   const url = urlInput.value.trim();
   if (!url) {
-    alert("Paste a YouTube URL first.");
+    alert(t("alert_need_url"));
     return;
   }
 
   const language = document.getElementById("languageSelect").value;
+  if (!language) {
+    alert(t("alert_need_language"));
+    return;
+  }
+
   const statusEl = document.getElementById("ingestStatus");
-  statusEl.textContent = "Starting...";
+  statusEl.textContent = t("ingest_status_starting");
 
   const formData = new FormData();
   formData.append("youtube_url", url);
@@ -90,7 +115,7 @@ document.getElementById("ingestBtn").addEventListener("click", async () => {
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    statusEl.textContent = `Could not start: ${err.detail || response.statusText}`;
+    statusEl.textContent = t("ingest_status_could_not_start", { detail: err.detail || response.statusText });
     return;
   }
 
@@ -112,30 +137,33 @@ function pollIngestStatus() {
     const response = await fetch(`/api/status/${state.projectId}`);
     if (!response.ok) {
       clearInterval(state.pollTimer);
-      statusEl.textContent = "Lost track of this project — paste the URL again.";
+      statusEl.textContent = t("ingest_status_lost_track");
       return;
     }
     const data = await response.json();
     const elapsed = Math.round((Date.now() - startedAt) / 1000);
 
     if (data.status === "processing") {
-      statusEl.textContent = `${data.phase_message || "Working..."} (${elapsed}s elapsed)`;
+      statusEl.textContent = t("ingest_status_elapsed", {
+        message: data.phase_message || t("ingest_status_working"),
+        elapsed,
+      });
     } else if (data.status === "done") {
       clearInterval(state.pollTimer);
       state.duration = data.duration;
       saveSession();
 
       if (data.video_cached && data.transcript_cached) {
-        statusEl.textContent = "Loaded from library (already downloaded and transcribed).";
+        statusEl.textContent = t("ingest_status_cached_both");
       } else if (data.video_cached) {
-        statusEl.textContent = `Video loaded from library, transcribed in ${elapsed}s.`;
+        statusEl.textContent = t("ingest_status_cached_video", { elapsed });
       } else {
-        statusEl.textContent = `Transcribed in ${elapsed}s.`;
+        statusEl.textContent = t("ingest_status_transcribed", { elapsed });
       }
 
       const transcriptResponse = await fetch(`/api/project/${state.projectId}/transcript`);
       if (!transcriptResponse.ok) {
-        statusEl.textContent = "Transcription finished but the transcript could not be loaded.";
+        statusEl.textContent = t("ingest_status_transcript_load_failed");
         return;
       }
 
@@ -143,13 +171,13 @@ function pollIngestStatus() {
       preview.src = "/api/workspace/video";
       preview.style.display = "block";
       document.getElementById("videoInfo").textContent =
-        `Duration ${formatTime(data.duration)}`;
+        t("video_info_duration", { duration: formatTime(data.duration) });
 
       showStep("stepEditMode");
       showEditMode(document.getElementById("editModeSelect").value);
     } else if (data.status === "error") {
       clearInterval(state.pollTimer);
-      statusEl.textContent = `Failed: ${data.error}`;
+      statusEl.textContent = t("ingest_status_failed", { error: data.error });
     }
   }, 1500);
 }
@@ -164,12 +192,15 @@ async function copyToClipboard(text, button) {
     window.prompt("Copy this manually (clipboard access was blocked):", text);
     return;
   }
-  button.textContent = "Copied!";
+  button.textContent = t("copy_button_copied");
   setTimeout(() => {
     button.textContent = original;
   }, 1500);
 }
 
+// These prompts are sent to Claude verbatim, so they stay in English
+// regardless of the UI language — the app's own interface language never
+// changes what gets asked of Claude or what's expected back.
 const MODE2_PROMPT =
   "Read AI_EDITING_INSTRUCTIONS.md in this project folder, then do Mode 2 " +
   "(build the corrected outline) exactly as it describes there.";
@@ -181,7 +212,7 @@ document.getElementById("copyOutlineBtn").addEventListener("click", (e) => {
 document.getElementById("copyAutonomousBtn").addEventListener("click", (e) => {
   const instruction = document.getElementById("autonomousInstructionInput").value.trim();
   if (!instruction) {
-    alert("Describe the result you want first.");
+    alert(t("alert_need_instruction"));
     return;
   }
   const prompt =
@@ -224,7 +255,7 @@ async function loadCues() {
 
   const statusEl = document.getElementById("cuesStatus");
   const viewEl = document.getElementById("cuesView");
-  statusEl.textContent = "Loading...";
+  statusEl.textContent = t("cues_status_loading");
   viewEl.innerHTML = "";
 
   const response = await fetch(`/api/project/${state.projectId}/cues`);
@@ -237,7 +268,7 @@ async function loadCues() {
 
   const data = await response.json();
   state.cues = data.cues;
-  statusEl.textContent = `${data.cues.length} cue(s).`;
+  statusEl.textContent = t("cues_status_count", { count: data.cues.length });
 
   const preview = document.getElementById("preview");
 
@@ -275,13 +306,13 @@ async function loadCues() {
 
 document.getElementById("cutSelectedCuesBtn").addEventListener("click", async () => {
   if (!state.projectId) {
-    alert("Paste and transcribe a video first.");
+    alert(t("alert_need_video"));
     return;
   }
 
   const checked = Array.from(document.querySelectorAll(".cue-checkbox:checked"));
   if (checked.length === 0) {
-    alert("Check at least one cue to remove first.");
+    alert(t("alert_check_one_cue"));
     return;
   }
 
@@ -295,7 +326,7 @@ document.getElementById("cutSelectedCuesBtn").addEventListener("click", async ()
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    alert(`Could not build cuts from selection: ${err.detail || response.statusText}`);
+    alert(t("alert_could_not_build_cuts", { detail: err.detail || response.statusText }));
     return;
   }
 
@@ -307,7 +338,7 @@ document.getElementById("cutSelectedCuesBtn").addEventListener("click", async ()
 document.getElementById("loadOutlineBtn").addEventListener("click", async () => {
   const statusEl = document.getElementById("outlineStatus");
   const viewEl = document.getElementById("outlineView");
-  statusEl.textContent = "Loading...";
+  statusEl.textContent = t("outline_status_loading");
   viewEl.innerHTML = "";
 
   const response = await fetch("/api/workspace/outline");
@@ -321,8 +352,8 @@ document.getElementById("loadOutlineBtn").addEventListener("click", async () => 
   const data = await response.json();
   state.outlineSections = data.sections;
   statusEl.textContent = data.sections.length
-    ? `${data.sections.length} section(s).`
-    : "outline.md is empty so far.";
+    ? t("outline_status_sections", { count: data.sections.length })
+    : t("outline_status_empty");
 
   const preview = document.getElementById("preview");
 
@@ -365,13 +396,13 @@ document.getElementById("loadOutlineBtn").addEventListener("click", async () => 
 
 document.getElementById("cutSelectedSectionsBtn").addEventListener("click", async () => {
   if (!state.projectId) {
-    alert("Paste and transcribe a video first.");
+    alert(t("alert_need_video"));
     return;
   }
 
   const checked = Array.from(document.querySelectorAll(".outline-checkbox:checked"));
   if (checked.length === 0) {
-    alert("Check at least one paragraph or sub-paragraph to remove first.");
+    alert(t("alert_check_one_section"));
     return;
   }
 
@@ -385,7 +416,7 @@ document.getElementById("cutSelectedSectionsBtn").addEventListener("click", asyn
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    alert(`Could not build cuts from selection: ${err.detail || response.statusText}`);
+    alert(t("alert_could_not_build_cuts", { detail: err.detail || response.statusText }));
     return;
   }
 
@@ -396,13 +427,13 @@ document.getElementById("cutSelectedSectionsBtn").addEventListener("click", asyn
 
 document.getElementById("parseBtn").addEventListener("click", async () => {
   if (!state.projectId) {
-    alert("Paste and transcribe a video first.");
+    alert(t("alert_need_video"));
     return;
   }
 
   const aiResponse = document.getElementById("aiResponse").value;
   if (!aiResponse.trim()) {
-    alert("Paste the AI's reply first.");
+    alert(t("alert_paste_ai_reply"));
     return;
   }
 
@@ -414,7 +445,7 @@ document.getElementById("parseBtn").addEventListener("click", async () => {
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    alert(`Parsing failed: ${err.detail || response.statusText}`);
+    alert(t("alert_parsing_failed", { detail: err.detail || response.statusText }));
     return;
   }
 
@@ -423,7 +454,7 @@ document.getElementById("parseBtn").addEventListener("click", async () => {
 
 document.getElementById("loadCutsFileBtn").addEventListener("click", async () => {
   if (!state.projectId) {
-    alert("Paste and transcribe a video first.");
+    alert(t("alert_need_video"));
     return;
   }
 
@@ -431,7 +462,7 @@ document.getElementById("loadCutsFileBtn").addEventListener("click", async () =>
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    alert(`Could not load workspace/cuts.md: ${err.detail || response.statusText}`);
+    alert(t("alert_could_not_load_cuts", { detail: err.detail || response.statusText }));
     return;
   }
 
@@ -467,12 +498,12 @@ function renderWarnings(warnings) {
 
 function renderSummary(data) {
   const el = document.getElementById("summary");
-  el.innerHTML = `
-    Original duration: <b>${formatTime(data.original_duration)}</b> &nbsp;·&nbsp;
-    Cuts found: <b>${state.cuts.length}</b> &nbsp;·&nbsp;
-    Removed: <b>${formatTime(data.removed_seconds)}</b> &nbsp;·&nbsp;
-    New duration (if all cuts kept enabled): <b id="newDuration">${formatTime(data.new_duration)}</b>
-  `;
+  el.innerHTML = t("summary_html", {
+    original: formatTime(data.original_duration),
+    count: state.cuts.length,
+    removed: formatTime(data.removed_seconds),
+    newDuration: formatTime(data.new_duration),
+  });
 }
 
 function recalcNewDuration() {
@@ -543,6 +574,10 @@ document.getElementById("audioModeSelect").addEventListener("change", (e) => {
   showAudioMode(e.target.value);
 });
 
+document.getElementById("autoTtsRateRange").addEventListener("input", (e) => {
+  document.getElementById("autoTtsRateValue").textContent = `${Number(e.target.value).toFixed(2)}x`;
+});
+
 async function ensureTtsVoicesLoaded() {
   if (state.ttsVoices.length === 0) {
     const response = await fetch("/api/tts/voices");
@@ -556,15 +591,28 @@ async function ensureTtsVoicesLoaded() {
   return state.ttsVoices;
 }
 
+function updateAutoTtsRateVisibility() {
+  const select = document.getElementById("autoTtsVoiceSelect");
+  const provider = select.selectedOptions[0]?.dataset.provider;
+  const show = provider === "azure" ? "" : "none";
+  document.getElementById("autoTtsRateRange").style.display = show;
+  document.getElementById("autoTtsRateValue").style.display = show;
+  document.querySelector('label[for="autoTtsRateRange"]').style.display = show;
+}
+
 function populateAutoTtsVoiceSelect() {
   const select = document.getElementById("autoTtsVoiceSelect");
-  if (select.options.length > 0) return;
-  for (const voice of state.ttsVoices) {
-    const option = document.createElement("option");
-    option.value = voice.name;
-    option.textContent = `${voice.label} (${voice.provider})`;
-    select.appendChild(option);
+  if (select.options.length === 0) {
+    for (const voice of state.ttsVoices) {
+      const option = document.createElement("option");
+      option.value = voice.name;
+      option.textContent = voice.label;
+      option.dataset.provider = voice.provider;
+      select.appendChild(option);
+    }
+    select.addEventListener("change", updateAutoTtsRateVisibility);
   }
+  updateAutoTtsRateVisibility();
 }
 
 // --- Audio option 1: original audio (plain render) ------------------------
@@ -573,7 +621,7 @@ document.getElementById("renderBtn").addEventListener("click", async () => {
   const enabledCuts = state.cuts.filter((c) => c.enabled);
 
   if (enabledCuts.length === 0) {
-    alert("No cuts are enabled — nothing to remove. Enable at least one cut, or there's nothing to render.");
+    alert(t("alert_no_cuts_enabled"));
     return;
   }
 
@@ -585,13 +633,13 @@ document.getElementById("renderBtn").addEventListener("click", async () => {
   );
 
   const statusEl = document.getElementById("renderStatus");
-  statusEl.textContent = "Starting render...";
+  statusEl.textContent = t("render_status_starting");
 
   const response = await fetch("/api/render", { method: "POST", body: formData });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    statusEl.textContent = `Render failed to start: ${err.detail || response.statusText}`;
+    statusEl.textContent = t("render_status_failed_start", { detail: err.detail || response.statusText });
     return;
   }
 
@@ -604,15 +652,17 @@ document.getElementById("autoTtsBtn").addEventListener("click", async () => {
   const enabledCuts = state.cuts.filter((c) => c.enabled);
 
   if (enabledCuts.length === 0) {
-    alert("No cuts are enabled — nothing to remove. Enable at least one cut, or there's nothing to render.");
+    alert(t("alert_no_cuts_enabled"));
     return;
   }
 
   const voice = document.getElementById("autoTtsVoiceSelect").value;
   if (!voice) {
-    alert("No TTS voices are available — install a Piper voice model (see the setup docs).");
+    alert(t("alert_no_voices"));
     return;
   }
+
+  const rate = document.getElementById("autoTtsRateRange").value;
 
   const formData = new FormData();
   formData.append("project_id", state.projectId);
@@ -621,15 +671,16 @@ document.getElementById("autoTtsBtn").addEventListener("click", async () => {
     JSON.stringify(enabledCuts.map((c) => ({ start: c.start, end: c.end })))
   );
   formData.append("voice", voice);
+  formData.append("rate", rate);
 
   const statusEl = document.getElementById("renderStatus");
-  statusEl.textContent = "Starting automatic voice-over...";
+  statusEl.textContent = t("auto_tts_status_starting");
 
   const response = await fetch("/api/auto-tts", { method: "POST", body: formData });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    statusEl.textContent = `Could not start: ${err.detail || response.statusText}`;
+    statusEl.textContent = t("auto_tts_status_failed", { detail: err.detail || response.statusText });
     return;
   }
 
@@ -640,12 +691,12 @@ document.getElementById("autoTtsBtn").addEventListener("click", async () => {
 
 document.getElementById("generateChunksBtn").addEventListener("click", async () => {
   if (!state.projectId) {
-    alert("Paste and transcribe a video first.");
+    alert(t("alert_need_video"));
     return;
   }
 
   const statusEl = document.getElementById("chunksStatus");
-  statusEl.textContent = "Building chunks...";
+  statusEl.textContent = t("chunks_status_building");
 
   const enabledCuts = state.cuts.filter((c) => c.enabled);
   const formData = new FormData();
@@ -665,13 +716,13 @@ document.getElementById("generateChunksBtn").addEventListener("click", async () 
 
   const data = await response.json();
   state.chunks = data.chunks;
-  const modeNote =
-    data.chunking_mode === "outline"
-      ? "One chunk per outline paragraph/sub-paragraph."
-      : "No outline found — using ~500-character chunks instead.";
-  statusEl.textContent =
-    `${data.chunks.length} chunk(s) — ${data.kept_cue_count} of ${data.total_cue_count} cues kept. ${modeNote} ` +
-    "Toggling cuts above? Click this button again to refresh the chunks.";
+  const modeNote = data.chunking_mode === "outline" ? t("mode_note_outline") : t("mode_note_fallback");
+  statusEl.textContent = t("chunks_status_result", {
+    count: data.chunks.length,
+    kept: data.kept_cue_count,
+    total: data.total_cue_count,
+    modeNote,
+  });
 
   await ensureTtsVoicesLoaded();
   renderChunks();
@@ -686,22 +737,28 @@ async function refreshAzureUsage() {
 
   const data = await response.json();
   const pct = ((data.characters_used / data.free_tier_limit) * 100).toFixed(2);
-  el.textContent =
-    `Azure usage this month (${data.month}): ${data.characters_used.toLocaleString()} / ` +
-    `${data.free_tier_limit.toLocaleString()} characters (${pct}% of free tier).`;
+  el.textContent = t("azure_usage_text", {
+    month: data.month,
+    used: data.characters_used.toLocaleString(),
+    limit: data.free_tier_limit.toLocaleString(),
+    pct,
+  });
   el.style.display = "block";
 }
 
 function showAudioFitResult(statusEl, result) {
   if (result.fits) {
-    statusEl.textContent =
-      `Fits — audio is ${result.audio_duration.toFixed(1)}s, slot is ${result.slot_duration.toFixed(1)}s.`;
+    statusEl.textContent = t("audio_fit_ok", {
+      audio: result.audio_duration.toFixed(1),
+      slot: result.slot_duration.toFixed(1),
+    });
     statusEl.classList.remove("warning");
   } else {
-    statusEl.textContent =
-      `Too long — audio is ${result.audio_duration.toFixed(1)}s but the slot is only ` +
-      `${result.slot_duration.toFixed(1)}s (${result.overflow_seconds.toFixed(1)}s over). ` +
-      "Regenerate it shorter or it will be cut off.";
+    statusEl.textContent = t("audio_fit_overflow", {
+      audio: result.audio_duration.toFixed(1),
+      slot: result.slot_duration.toFixed(1),
+      overflow: result.overflow_seconds.toFixed(1),
+    });
     statusEl.classList.add("warning");
   }
 }
@@ -719,7 +776,7 @@ function renderChunks() {
 
     const indexEl = document.createElement("span");
     indexEl.className = "chunk-index";
-    indexEl.textContent = chunk.title || `Chunk ${index + 1}`;
+    indexEl.textContent = chunk.title || t("chunk_label", { n: index + 1 });
 
     const timeEl = document.createElement("span");
     timeEl.className = "chunk-time";
@@ -727,7 +784,7 @@ function renderChunks() {
 
     const slotEl = document.createElement("span");
     slotEl.className = "chunk-slot";
-    slotEl.textContent = `slot: ${chunk.slot_duration.toFixed(1)}s`;
+    slotEl.textContent = t("slot_label", { duration: chunk.slot_duration.toFixed(1) });
 
     head.append(indexEl, timeEl, slotEl);
 
@@ -740,7 +797,7 @@ function renderChunks() {
     row.className = "row";
 
     const copyBtn = document.createElement("button");
-    copyBtn.textContent = "Copy text";
+    copyBtn.textContent = t("copy_text_button");
     copyBtn.addEventListener("click", () => copyToClipboard(textEl.value, copyBtn));
 
     const audioInput = document.createElement("input");
@@ -748,7 +805,7 @@ function renderChunks() {
     audioInput.accept = "audio/*";
 
     const uploadBtn = document.createElement("button");
-    uploadBtn.textContent = "Upload voice-over";
+    uploadBtn.textContent = t("upload_voiceover_button");
 
     const audioStatus = document.createElement("div");
     audioStatus.className = "muted chunk-audio-status";
@@ -766,11 +823,11 @@ function renderChunks() {
     uploadBtn.addEventListener("click", async () => {
       const file = audioInput.files[0];
       if (!file) {
-        alert("Choose an audio file first.");
+        alert(t("alert_choose_audio_file"));
         return;
       }
 
-      audioStatus.textContent = "Uploading...";
+      audioStatus.textContent = t("audio_status_uploading");
       audioStatus.classList.remove("warning");
 
       const formData = new FormData();
@@ -786,7 +843,7 @@ function renderChunks() {
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        audioStatus.textContent = `Upload failed: ${err.detail || response.statusText}`;
+        audioStatus.textContent = t("audio_status_upload_failed", { detail: err.detail || response.statusText });
         audioStatus.classList.add("warning");
         return;
       }
@@ -811,12 +868,39 @@ function renderChunks() {
         voiceSelect.appendChild(option);
       }
 
+      const rateLabel = document.createElement("label");
+      rateLabel.textContent = t("tts_speed_label");
+      rateLabel.htmlFor = `chunkRate${index}`;
+
+      const rateRange = document.createElement("input");
+      rateRange.type = "range";
+      rateRange.id = `chunkRate${index}`;
+      rateRange.min = "0.5";
+      rateRange.max = "1.5";
+      rateRange.step = "0.05";
+      rateRange.value = "1.0";
+
+      const rateValue = document.createElement("span");
+      rateValue.textContent = "1.00x";
+      rateRange.addEventListener("input", () => {
+        rateValue.textContent = `${Number(rateRange.value).toFixed(2)}x`;
+      });
+
+      function updateRateControlVisibility() {
+        const provider = voiceSelect.selectedOptions[0]?.dataset.provider;
+        const show = provider === "azure" ? "" : "none";
+        rateLabel.style.display = show;
+        rateRange.style.display = show;
+        rateValue.style.display = show;
+      }
+
       const generateBtn = document.createElement("button");
 
       function updateGenerateBtnLabel() {
         const provider = voiceSelect.selectedOptions[0]?.dataset.provider;
         generateBtn.textContent =
-          provider === "azure" ? "Generate with Azure (paid, counts toward quota)" : "Generate with Piper (free, local)";
+          provider === "azure" ? t("generate_with_azure_button") : t("generate_with_piper_button");
+        updateRateControlVisibility();
       }
       updateGenerateBtnLabel();
       voiceSelect.addEventListener("change", updateGenerateBtnLabel);
@@ -825,7 +909,7 @@ function renderChunks() {
         const provider = voiceSelect.selectedOptions[0]?.dataset.provider;
         generateBtn.disabled = true;
         audioStatus.textContent =
-          provider === "azure" ? "Generating speech via Azure..." : "Generating speech locally...";
+          provider === "azure" ? t("audio_status_generating_azure") : t("audio_status_generating_local");
         audioStatus.classList.remove("warning");
 
         const formData = new FormData();
@@ -834,6 +918,7 @@ function renderChunks() {
         formData.append("text", textEl.value);
         formData.append("slot_duration", String(chunk.slot_duration));
         formData.append("voice", voiceSelect.value);
+        formData.append("rate", rateRange.value);
 
         try {
           const response = await fetch("/api/transcript-chunks/tts", {
@@ -843,7 +928,7 @@ function renderChunks() {
 
           if (!response.ok) {
             const err = await response.json().catch(() => ({}));
-            audioStatus.textContent = `Generation failed: ${err.detail || response.statusText}`;
+            audioStatus.textContent = t("audio_status_generation_failed", { detail: err.detail || response.statusText });
             audioStatus.classList.add("warning");
             return;
           }
@@ -856,7 +941,7 @@ function renderChunks() {
         }
       });
 
-      ttsRow.append(voiceSelect, generateBtn);
+      ttsRow.append(voiceSelect, rateLabel, rateRange, rateValue, generateBtn);
       card.append(ttsRow);
     }
 
@@ -868,7 +953,7 @@ document.getElementById("renderWithAudioBtn").addEventListener("click", async ()
   const enabledCuts = state.cuts.filter((c) => c.enabled);
 
   if (enabledCuts.length === 0) {
-    alert("No cuts are enabled — nothing to remove. Enable at least one cut, or there's nothing to render.");
+    alert(t("alert_no_cuts_enabled"));
     return;
   }
 
@@ -887,20 +972,20 @@ document.getElementById("renderWithAudioBtn").addEventListener("click", async ()
   if (document.getElementById("addMusicCheck").checked) {
     const musicFile = document.getElementById("musicInput").files[0];
     if (!musicFile) {
-      alert("Check \"Add background music\" and choose a music file, or uncheck it.");
+      alert(t("alert_add_music_check"));
       return;
     }
     formData.append("music", musicFile);
   }
 
   const statusEl = document.getElementById("renderStatus");
-  statusEl.textContent = "Starting render...";
+  statusEl.textContent = t("render_status_starting");
 
   const response = await fetch("/api/render-with-audio", { method: "POST", body: formData });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    statusEl.textContent = `Render failed to start: ${err.detail || response.statusText}`;
+    statusEl.textContent = t("render_status_failed_start", { detail: err.detail || response.statusText });
     return;
   }
 
@@ -923,7 +1008,7 @@ function pollRenderStatus() {
 
     if (data.status === "done") {
       clearInterval(state.pollTimer);
-      statusEl.textContent = `Done in ${elapsed}s.`;
+      statusEl.textContent = t("render_status_done", { elapsed });
 
       const link = document.getElementById("downloadLink");
       link.href = data.download_url;
@@ -932,12 +1017,21 @@ function pollRenderStatus() {
       const preview = document.getElementById("resultPreview");
       preview.src = data.download_url;
       preview.style.display = "block";
+
+      // Automatic TTS can burn through Azure quota in one batch with no
+      // per-chunk checkpoint to refresh it at — catch up once the render
+      // (and any voice-over generation before it) has actually finished.
+      if (state.ttsVoices.some((v) => v.provider === "azure")) {
+        refreshAzureUsage();
+      }
     } else if (data.status === "error") {
       clearInterval(state.pollTimer);
-      statusEl.textContent = `Failed: ${data.error}`;
+      statusEl.textContent = t("render_status_failed", { error: data.error });
     } else {
-      const message = data.phase_message || "Rendering...";
-      statusEl.textContent = `${message} (${elapsed}s elapsed, re-encoding can take a while for long videos)`;
+      statusEl.textContent = t("render_status_progress", {
+        message: data.phase_message || t("render_status_rendering_fallback"),
+        elapsed,
+      });
     }
   }, 1500);
 }

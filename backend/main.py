@@ -448,10 +448,13 @@ async def azure_usage():
     return azure_tts.get_usage()
 
 
-def _synthesize_chunk(index: int, text: str, voice: str) -> Path:
+def _synthesize_chunk(index: int, text: str, voice: str, rate: float = 1.0) -> Path:
     """Dispatches to Piper (free, offline, no API key) or Azure AI Speech
     (paid cloud API, needs AZURE_SPEECH_KEY/REGION) depending on which voice
-    was picked, writing the result to workspace/chunk_audio/chunk_{index}.*"""
+    was picked, writing the result to workspace/chunk_audio/chunk_{index}.*
+
+    `rate` (a speed multiplier, 1.0 = normal) only applies to Azure voices —
+    Piper has no equivalent control here, so it's ignored for Piper voices."""
 
     CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     for old in CHUNK_AUDIO_DIR.glob(f"chunk_{index:04d}.*"):
@@ -462,7 +465,7 @@ def _synthesize_chunk(index: int, text: str, voice: str) -> Path:
         synthesize_to_wav(text, voice, str(audio_path))
     elif voice in azure_tts.KNOWN_VOICES:
         audio_path = CHUNK_AUDIO_DIR / f"chunk_{index:04d}.mp3"
-        azure_tts.synthesize_to_file(text, voice, str(audio_path))
+        azure_tts.synthesize_to_file(text, voice, str(audio_path), rate=rate)
     else:
         raise ValueError(f"Unknown voice: {voice}")
 
@@ -476,13 +479,14 @@ async def generate_chunk_tts(
     text: str = Form(...),
     slot_duration: float = Form(...),
     voice: str = Form(...),
+    rate: float = Form(1.0),
 ):
     """Generate a chunk's voice-over and check it isn't longer than the
     video slot it would replace."""
     _get_project(project_id)
 
     try:
-        audio_path = _synthesize_chunk(chunk_index, text, voice)
+        audio_path = _synthesize_chunk(chunk_index, text, voice, rate=rate)
     except VoiceNotAvailableError as exc:
         raise HTTPException(400, str(exc))
     except azure_tts.AzureNotConfiguredError as exc:
@@ -674,6 +678,7 @@ def _run_auto_tts(
     keep_segments: list[tuple[float, float]],
     output_path: Path,
     voice: str,
+    rate: float = 1.0,
 ) -> None:
     """Mode 2 of the audio-mode combobox: automatically generates a Piper/
     Azure voice-over for every surviving chunk (no per-chunk review), then
@@ -690,7 +695,7 @@ def _run_auto_tts(
             project["phase"] = "generating_voiceover"
             project["phase_message"] = f"Generating voice-over… chunk {index + 1}/{total}"
             project["progress"] = index / total if total else 0.0
-            _synthesize_chunk(index, chunk.text, voice)
+            _synthesize_chunk(index, chunk.text, voice, rate=rate)
 
         voice_overlays: list[tuple[float, str]] = []
         for index, chunk in enumerate(chunks):
@@ -725,6 +730,7 @@ async def auto_tts(
     project_id: str = Form(...),
     cuts_json: str = Form(...),
     voice: str = Form(...),
+    rate: float = Form(1.0),
 ):
     """Audio Option 2 — automatic TTS: batch-generates a voice-over for
     every chunk with one default voice and no per-chunk review, then
@@ -755,7 +761,7 @@ async def auto_tts(
 
     thread = threading.Thread(
         target=_run_auto_tts,
-        args=(project_id, normalized, keep_segments, output_path, voice),
+        args=(project_id, normalized, keep_segments, output_path, voice, rate),
         daemon=True,
     )
     thread.start()

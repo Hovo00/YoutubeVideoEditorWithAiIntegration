@@ -10,38 +10,51 @@
 
   <div class="app">
 
-    <header>
-      <h1>VideoEditorY</h1>
-      <p>Edit a video by editing its transcript.</p>
+    <header class="header-row">
+      <div>
+        <h1>VideoEditorY</h1>
+        <p data-i18n="header_subtitle">Edit a video by editing its transcript.</p>
+      </div>
+      <div class="settings-wrap">
+        <button id="settingsBtn" class="settings-btn" data-i18n-title="settings_button_title" title="Settings">&#9881;</button>
+        <div id="settingsPanel" class="settings-panel" style="display:none">
+          <label for="uiLangSelect" data-i18n="settings_lang_label">Interface language</label>
+          <select id="uiLangSelect">
+            <option value="en">English</option>
+            <option value="ru">Русский</option>
+          </select>
+        </div>
+      </div>
     </header>
 
     <section class="step" id="step1">
-      <h2>1. Paste a YouTube link</h2>
-      <p class="muted">
+      <h2 data-i18n="step1_heading">1. Paste a YouTube link</h2>
+      <p class="muted" data-i18n="step1_desc">
         The app downloads the video and transcribes it locally with Whisper — no manual
         caption download/upload needed. Pick the language that's actually spoken in the
         video for best accuracy.
       </p>
       <div class="row">
-        <input type="text" id="youtubeUrlInput" placeholder="https://youtu.be/..." />
+        <input type="text" id="youtubeUrlInput" data-i18n-placeholder="youtube_url_placeholder" placeholder="https://youtu.be/..." />
         <select id="languageSelect">
-          <option value="English">English</option>
-          <option value="Russian">Russian</option>
-          <option value="Armenian">Armenian</option>
-          <option value="Spanish">Spanish</option>
-          <option value="French">French</option>
-          <option value="German">German</option>
-          <option value="Italian">Italian</option>
-          <option value="Portuguese">Portuguese</option>
-          <option value="Ukrainian">Ukrainian</option>
-          <option value="Turkish">Turkish</option>
-          <option value="Arabic">Arabic</option>
-          <option value="Hindi">Hindi</option>
-          <option value="Chinese">Chinese</option>
-          <option value="Japanese">Japanese</option>
-          <option value="Korean">Korean</option>
+          <option value="" selected disabled data-i18n="language_select_placeholder">Select the video's language…</option>
+          <option value="English" data-i18n="lang_option_english">English</option>
+          <option value="Russian" data-i18n="lang_option_russian">Russian</option>
+          <option value="Armenian" data-i18n="lang_option_armenian">Armenian</option>
+          <option value="Spanish" data-i18n="lang_option_spanish">Spanish</option>
+          <option value="French" data-i18n="lang_option_french">French</option>
+          <option value="German" data-i18n="lang_option_german">German</option>
+          <option value="Italian" data-i18n="lang_option_italian">Italian</option>
+          <option value="Portuguese" data-i18n="lang_option_portuguese">Portuguese</option>
+          <option value="Ukrainian" data-i18n="lang_option_ukrainian">Ukrainian</option>
+          <option value="Turkish" data-i18n="lang_option_turkish">Turkish</option>
+          <option value="Arabic" data-i18n="lang_option_arabic">Arabic</option>
+          <option value="Hindi" data-i18n="lang_option_hindi">Hindi</option>
+          <option value="Chinese" data-i18n="lang_option_chinese">Chinese</option>
+          <option value="Japanese" data-i18n="lang_option_japanese">Japanese</option>
+          <option value="Korean" data-i18n="lang_option_korean">Korean</option>
         </select>
-        <button id="ingestBtn">Go</button>
+        <button id="ingestBtn" data-i18n="go_button">Go</button>
       </div>
       <div id="ingestStatus" class="muted"></div>
       <video id="preview" class="video" controls style="display:none"></video>
@@ -49,29 +62,29 @@
     </section>
 
     <section class="step" id="stepEditMode" style="display:none">
-      <h2>2. Choose how to edit</h2>
+      <h2 data-i18n="step2_heading">2. Choose how to edit</h2>
       <div class="row">
         <select id="editModeSelect">
-          <option value="manual">Manual — delete parts yourself, no AI</option>
-          <option value="outline">AI outline — Claude structures + corrects, you pick sections to remove</option>
-          <option value="autonomous">AI autonomous — Claude decides what to cut from your instruction</option>
+          <option value="manual" data-i18n="edit_mode_manual_option">Manual — delete parts yourself, no AI</option>
+          <option value="outline" data-i18n="edit_mode_outline_option">AI outline — Claude structures + corrects, you pick sections to remove</option>
+          <option value="autonomous" data-i18n="edit_mode_autonomous_option">AI autonomous — Claude decides what to cut from your instruction</option>
         </select>
       </div>
 
       <div id="editModeManual" style="display:none">
-        <p class="muted">
+        <p class="muted" data-i18n="manual_desc">
           Every cue Whisper produced, with its exact timestamp. Check the ones you want
           removed, then cut — no AI involved.
         </p>
         <div id="cuesStatus" class="muted"></div>
         <div id="cuesView"></div>
         <div class="row">
-          <button id="cutSelectedCuesBtn">Cut selected cues</button>
+          <button id="cutSelectedCuesBtn" data-i18n="cut_selected_cues_button">Cut selected cues</button>
         </div>
       </div>
 
       <div id="editModeOutline" style="display:none">
-        <p class="muted">
+        <p class="muted" data-i18n-html="outline_desc_html">
           In Claude Desktop (or a <code>claude</code> terminal), attach/<code>cd</code> into
           this project folder. Click "Copy message for Claude" below, paste it as your
           first message, and send it — the message points Claude at
@@ -81,39 +94,39 @@
           paragraphs with titles, correcting Whisper's transcription mistakes along the way.
         </p>
         <div class="row">
-          <button id="copyOutlineBtn">Copy message for Claude</button>
-          <button id="loadOutlineBtn">Load outline</button>
+          <button id="copyOutlineBtn" data-i18n="copy_message_button">Copy message for Claude</button>
+          <button id="loadOutlineBtn" data-i18n="load_outline_button">Load outline</button>
         </div>
         <div id="outlineStatus" class="muted"></div>
-        <p class="muted">
+        <p class="muted" data-i18n="outline_note">
           Each paragraph/sub-paragraph below shows Claude's (possibly corrected) transcript
           text for that span — check the box on any paragraph or sub-paragraph to mark it
           for removal, then click "Cut selected sections".
         </p>
         <div id="outlineView"></div>
         <div class="row">
-          <button id="cutSelectedSectionsBtn">Cut selected sections</button>
+          <button id="cutSelectedSectionsBtn" data-i18n="cut_selected_sections_button">Cut selected sections</button>
         </div>
       </div>
 
       <div id="editModeAutonomous" style="display:none">
-        <p class="muted">
+        <p class="muted" data-i18n-html="autonomous_desc_html">
           Describe the overall result you want — e.g. "this is 40 minutes, trim it to
           about 15, keep only the important information." Claude decides what to remove.
           Click "Copy message for Claude" and paste it into Claude Desktop/terminal; it
           writes <code>workspace/cuts.md</code> for you.
         </p>
         <div class="row">
-          <input type="text" id="autonomousInstructionInput" placeholder="e.g. trim this to about 15 minutes, keep only the important information" />
-          <button id="copyAutonomousBtn">Copy message for Claude</button>
+          <input type="text" id="autonomousInstructionInput" data-i18n-placeholder="autonomous_instruction_placeholder" placeholder="e.g. trim this to about 15 minutes, keep only the important information" />
+          <button id="copyAutonomousBtn" data-i18n="copy_message_button">Copy message for Claude</button>
         </div>
         <div class="row">
-          <button id="loadCutsFileBtn">Load cuts from workspace/cuts.md</button>
+          <button id="loadCutsFileBtn" data-i18n="load_cuts_file_button">Load cuts from workspace/cuts.md</button>
         </div>
 
         <details class="manual-fallback">
-          <summary>Or paste a reply from another AI manually</summary>
-          <p class="muted">
+          <summary data-i18n="manual_fallback_summary">Or paste a reply from another AI manually</summary>
+          <p class="muted" data-i18n-html="manual_fallback_desc_html">
             Paste the full structured reply you got back from ChatGPT (or another AI)
             after giving it <code>AI_EDITING_INSTRUCTIONS.md</code> plus your instruction
             and transcript — including its <code>## REMOVED</code> section.
@@ -125,7 +138,7 @@
 ## CHANGE_LOG
 ..."></textarea>
           <div class="row">
-            <button id="parseBtn">Parse cuts</button>
+            <button id="parseBtn" data-i18n="parse_cuts_button">Parse cuts</button>
           </div>
         </details>
       </div>
@@ -134,17 +147,17 @@
     </section>
 
     <section class="step" id="step3" style="display:none">
-      <h2>3. Review cuts</h2>
+      <h2 data-i18n="step3_heading">3. Review cuts</h2>
       <div id="summary" class="summary"></div>
 
       <table id="cutsTable">
         <thead>
           <tr>
             <th></th>
-            <th>Start</th>
-            <th>End</th>
-            <th>Dur.</th>
-            <th>Text / reason</th>
+            <th data-i18n="table_header_start">Start</th>
+            <th data-i18n="table_header_end">End</th>
+            <th data-i18n="table_header_duration">Dur.</th>
+            <th data-i18n="table_header_text_reason">Text / reason</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -152,36 +165,41 @@
     </section>
 
     <section class="step" id="stepAudioMode" style="display:none">
-      <h2>4. Choose audio &amp; render</h2>
+      <h2 data-i18n="step4_heading">4. Choose audio &amp; render</h2>
       <div class="row">
         <select id="audioModeSelect">
-          <option value="original">Original audio — just cut, keep the real audio</option>
-          <option value="auto-tts">Automatic TTS — generate a voice-over for every chunk automatically</option>
-          <option value="manual-tts">Manual TTS — edit/generate/upload voice-over per chunk yourself</option>
+          <option value="original" data-i18n="audio_mode_original_option">Original audio — just cut, keep the real audio</option>
+          <option value="auto-tts" data-i18n="audio_mode_auto_option">Automatic TTS — generate a voice-over for every chunk automatically</option>
+          <option value="manual-tts" data-i18n="audio_mode_manual_option">Manual TTS — edit/generate/upload voice-over per chunk yourself</option>
         </select>
       </div>
 
       <div id="audioModeOriginal" style="display:none">
-        <p class="muted">Keeps the original audio untouched, no voice-over, no music.</p>
+        <p class="muted" data-i18n="audio_original_desc">Keeps the original audio untouched, no voice-over, no music.</p>
         <div class="row">
-          <button id="renderBtn">Render edited video</button>
+          <button id="renderBtn" data-i18n="render_button">Render edited video</button>
         </div>
       </div>
 
       <div id="audioModeAuto" style="display:none">
-        <p class="muted">
+        <p class="muted" data-i18n="auto_tts_desc">
           Generates a Piper voice-over for every surviving chunk automatically (no
           per-chunk review) and renders straight away. A real but minimal first version —
           use Manual TTS below if you want to review/fix chunks individually.
         </p>
         <div class="row">
           <select id="autoTtsVoiceSelect"></select>
-          <button id="autoTtsBtn">Generate voice-over automatically &amp; render</button>
+          <label for="autoTtsRateRange" data-i18n="tts_speed_label">Speed:</label>
+          <input type="range" id="autoTtsRateRange" min="0.5" max="1.5" step="0.05" value="1.0" />
+          <span id="autoTtsRateValue">1.00x</span>
+          <button id="autoTtsBtn" data-i18n="auto_tts_button">Generate voice-over automatically &amp; render</button>
         </div>
       </div>
 
+      <div id="azureUsageStatus" class="muted" style="display:none"></div>
+
       <div id="audioModeManual" style="display:none">
-        <p class="muted">
+        <p class="muted" data-i18n="manual_tts_desc">
           Text from everything your <em>currently enabled</em> cuts above would keep. If you
           used the AI outline edit mode, this is one chunk per outline paragraph/
           sub-paragraph; otherwise it falls back to ~500-character chunks cut at cue
@@ -194,32 +212,32 @@
           audio (generated or uploaded), a player appears so you can listen right there.
         </p>
         <div class="row">
-          <button id="generateChunksBtn">Generate voice-over text chunks</button>
+          <button id="generateChunksBtn" data-i18n="generate_chunks_button">Generate voice-over text chunks</button>
         </div>
         <div id="chunksStatus" class="muted"></div>
-        <div id="azureUsageStatus" class="muted" style="display:none"></div>
         <div id="chunksView"></div>
 
         <div class="row">
-          <label><input type="checkbox" id="cutOriginalAudioCheck" /> Cut the original audio track</label>
+          <label><input type="checkbox" id="cutOriginalAudioCheck" /> <span data-i18n="cut_original_audio_label">Cut the original audio track</span></label>
         </div>
         <div class="row">
-          <label><input type="checkbox" id="addMusicCheck" /> Add background music</label>
+          <label><input type="checkbox" id="addMusicCheck" /> <span data-i18n="add_music_label">Add background music</span></label>
           <input type="file" id="musicInput" accept="audio/*" />
-          <label>Volume: <input type="number" id="musicDbInput" value="-5" step="1" style="width:4em" /> dB</label>
+          <label><span data-i18n="volume_label">Volume:</span> <input type="number" id="musicDbInput" value="-5" step="1" style="width:4em" /> <span data-i18n="db_label">dB</span></label>
         </div>
         <div class="row">
-          <button id="renderWithAudioBtn">Render with custom audio</button>
+          <button id="renderWithAudioBtn" data-i18n="render_with_audio_button">Render with custom audio</button>
         </div>
       </div>
 
       <div id="renderStatus" class="muted"></div>
-      <a id="downloadLink" class="download" style="display:none" target="_blank">Download edited video</a>
+      <a id="downloadLink" class="download" style="display:none" target="_blank" data-i18n="download_link_text">Download edited video</a>
       <video id="resultPreview" class="video" controls style="display:none"></video>
     </section>
 
   </div>
 
+  <script src="/i18n.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

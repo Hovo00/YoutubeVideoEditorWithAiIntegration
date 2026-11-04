@@ -140,38 +140,16 @@ def render_video(
                 output_path,
             ]
     else:
-        filter_parts = []
-        video_inputs = ""
-        audio_inputs = ""
-
-        for index, (start, end) in enumerate(keep_segments):
-            filter_parts.append(
-                f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS[v{index}]"
-            )
-            video_inputs += f"[v{index}]"
-
-            if audio:
-                filter_parts.append(
-                    f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[a{index}]"
-                )
-                audio_inputs += f"[a{index}]"
-
+        filter_parts = [_video_cut_filter(keep_segments, "outv")]
         if audio:
-            concat_inputs = "".join(
-                f"[v{i}][a{i}]" for i in range(len(keep_segments))
-            )
-            concat_tail = f"concat=n={len(keep_segments)}:v=1:a=1[outv][outa]"
-        else:
-            concat_inputs = video_inputs
-            concat_tail = f"concat=n={len(keep_segments)}:v=1:a=0[outv]"
-
-        filter_complex = ";".join(filter_parts) + ";" + concat_inputs + concat_tail
+            filter_parts.append(_audio_cut_filter(keep_segments, "outa"))
+        filter_complex = ";".join(filter_parts)
         audio_map = ["-map", "[outa]"] if audio else []
 
         def build_command(ffmpeg: str, codec_args: list[str]) -> list[str]:
             return [
                 ffmpeg, "-y",
-                "-i", input_path,
+                *_source_input_args(input_path, keep_segments),
                 "-filter_complex", filter_complex,
                 "-map", "[outv]",
                 *audio_map,
@@ -185,6 +163,53 @@ def render_video(
 
 
 _MIX_SAMPLE_RATE = 44100
+
+
+def _video_cut_filter(keep_segments: list[tuple[float, float]], out_label: str) -> str:
+    """Keeps only the frames inside keep_segments, in one pass over [0:v].
+
+    Not one trim branch per segment + concat: ffmpeg copies every decoded
+    frame into every trim branch, and a later segment's branch holds its
+    frames in memory until concat gets to it. A 6-minute 1080p video keeping
+    0-165s plus a tail at 354s needed >12 GB and was OOM-killed. Here
+    `select` drops the cut frames as they're decoded, and `setpts` shifts
+    each kept frame back by the total length cut before it. That's exact for
+    variable frame rates too, and memory stays flat."""
+    keep = "+".join(f"gte(t,{start:.6f})*lt(t,{end:.6f})" for start, end in keep_segments)
+
+    shifts = []
+    previous_end = 0.0
+    for start, end in keep_segments:
+        gap = start - previous_end
+        if gap > 0:
+            shifts.append(f"gte(T,{start:.6f})*{gap:.6f}")
+        previous_end = end
+    shift = "+".join(shifts) or "0"
+
+    return f"[0:v]select='{keep}',setpts='PTS-({shift})/TB'[{out_label}]"
+
+
+def _audio_cut_filter(keep_segments: list[tuple[float, float]], out_label: str, extra: str = "") -> str:
+    """Sample-exact atrim + concat of [0:a]. The per-segment branches buffer
+    like the video ones would, but audio is small (minutes of decoded audio
+    are tens of MB), and atrim cuts on exact samples, which select can't."""
+    parts = [
+        f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[a{index}]"
+        for index, (start, end) in enumerate(keep_segments)
+    ]
+    labels = "".join(f"[a{index}]" for index in range(len(keep_segments)))
+    tail = f",{extra}" if extra else ""
+    parts.append(f"{labels}concat=n={len(keep_segments)}:v=0:a=1{tail}[{out_label}]")
+    return ";".join(parts)
+
+
+def _source_input_args(input_path: str, keep_segments: list[tuple[float, float]]) -> list[str]:
+    """`-i input`, limited to end just after the last kept segment, so
+    ffmpeg doesn't decode a cut-off tail of the video for nothing.
+    Input-side `-t` (with no `-ss`) keeps timestamps unchanged, so the
+    select/atrim filters still line up."""
+    last_end = max(end for _, end in keep_segments)
+    return ["-t", f"{last_end + 0.5:.3f}", "-i", input_path]
 
 
 def render_video_with_audio(
@@ -211,7 +236,7 @@ def render_video_with_audio(
     total_duration = sum(end - start for start, end in keep_segments)
     include_original_audio = keep_original_audio and has_audio_stream(input_path)
 
-    inputs: list[str] = ["-i", input_path]
+    inputs: list[str] = _source_input_args(input_path, keep_segments)
     next_input_index = 1
 
     music_input_index = None
@@ -228,14 +253,7 @@ def render_video_with_audio(
 
     filter_parts = []
 
-    # Video: trim + concat each kept segment (same as render_video).
-    video_labels = ""
-    for index, (start, end) in enumerate(keep_segments):
-        filter_parts.append(
-            f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS[v{index}]"
-        )
-        video_labels += f"[v{index}]"
-    filter_parts.append(f"{video_labels}concat=n={len(keep_segments)}:v=1:a=0[outv]")
+    filter_parts.append(_video_cut_filter(keep_segments, "outv"))
 
     # Audio: always start from a full-length silent bed so the output track
     # reliably spans the whole video regardless of which optional sources
@@ -247,15 +265,7 @@ def render_video_with_audio(
     )
 
     if include_original_audio:
-        audio_labels = ""
-        for index, (start, end) in enumerate(keep_segments):
-            filter_parts.append(
-                f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[a{index}]"
-            )
-            audio_labels += f"[a{index}]"
-        filter_parts.append(
-            f"{audio_labels}concat=n={len(keep_segments)}:v=0:a=1,{aformat}[origaudio]"
-        )
+        filter_parts.append(_audio_cut_filter(keep_segments, "origaudio", aformat))
         mix_labels.append("[origaudio]")
 
     if music_input_index is not None:
@@ -272,7 +282,9 @@ def render_video_with_audio(
         mix_labels.append(f"[{label}]")
 
     filter_parts.append(
-        f"{''.join(mix_labels)}amix=inputs={len(mix_labels)}:duration=longest:"
+        # duration=first: the silent bed is exactly as long as the video, so a
+        # voice-over or music running past the end can't extend the audio.
+        f"{''.join(mix_labels)}amix=inputs={len(mix_labels)}:duration=first:"
         f"dropout_transition=0:normalize=0[outa]"
     )
 

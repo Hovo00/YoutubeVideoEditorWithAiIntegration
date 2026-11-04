@@ -210,6 +210,41 @@ second cue's genuinely garbled fragment is honestly flagged rather than
 guessed at — don't invent a plausible place name just because the sentence
 "needs" one.
 
+#### Spelling for text-to-speech (very important)
+
+The body text you write is **read aloud word-for-word by a text-to-speech
+voice** (the app's TTS modes voice each paragraph/sub-paragraph straight from
+`outline.md`). TTS pronounces exactly what is written, so a spelling shortcut
+a human reader would silently fix becomes an audibly wrong word in the final
+video. Proofread every body text block and every title for this before
+writing the file.
+
+- **Russian: always write `ё` where the word is pronounced with `ё`.**
+  Whisper (like most Russian text) usually writes `е` instead, and TTS then
+  reads it as `е`. Often that's a different word: `Все о весах` is read as
+  "все" (everyone), not "всё" (everything). Fix every such word, in body text
+  and titles alike, e.g.:
+  - `все` → `всё` when it means "everything / all of it" (`Всё о весах`,
+    `всё равно`, `всё же`, `обратить всё в шутку`), but keep `все` when it
+    means "everyone / all (plural)" (`все остальные знаки зодиака`, `все люди`)
+  - `еще` → `ещё`, `ее` → `её`, `мое/твое/свое` → `моё/твоё/своё`,
+    `нее` → `неё`, `пойдем` → `пойдём`, `идет` → `идёт`, `живет` → `живёт`,
+    `берет` → `берёт`, `черный` → `чёрный`, `желтый` → `жёлтый`,
+    `легкий` → `лёгкий`, `звезды` → `звёзды`, `шел` → `шёл`, `тетя` → `тётя`,
+    `ребенок` → `ребёнок`, `всерьез` → `всерьёз`, `зачет` → `зачёт`,
+    and every other word whose correct pronunciation has `ё`.
+  - Decide from context: `все` vs `всё`, `небо` vs `нёбо`, `узнаем` (we find
+    out) vs `узнаём` (we recognize), `совершенный` vs `совершённый`.
+- Make these and other pronunciation-relevant fixes **silently** (no
+  `{corrected: ...}` markup). They are spelling, not content changes, and
+  any markup in the body text could end up read aloud.
+- Same idea for anything else that changes what TTS says: fix
+  obviously wrong word forms or endings, words glued together or split
+  apart, Latin look-alike letters inside Cyrillic words, and missing
+  sentence punctuation (TTS takes its pauses and intonation from
+  punctuation, so a run-on sentence without commas and periods sounds
+  rushed and wrong).
+
 5. Write the result to `workspace/outline.md`, in **exactly** this
    format — the app parses it automatically to build a navigable view
    with click-to-seek timestamps, so the heading pattern must match

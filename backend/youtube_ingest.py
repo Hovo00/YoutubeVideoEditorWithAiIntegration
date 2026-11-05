@@ -72,6 +72,10 @@ def _whisper_venv_nvidia_lib_dirs() -> list[str]:
 
 def _whisper_env() -> dict:
     env = os.environ.copy()
+    # Whisper's stdout is a pipe here, so Python would buffer it in large
+    # blocks and the per-segment progress lines would arrive late or only at
+    # the very end.
+    env["PYTHONUNBUFFERED"] = "1"
     if _is_jetson():
         lib_paths = [_JETSON_CUDA_LIB_PATH, *_whisper_venv_nvidia_lib_dirs()]
         existing = env.get("LD_LIBRARY_PATH", "")
@@ -199,8 +203,10 @@ def extract_audio(video_path: Path, dest_dir: Path) -> Path:
     return audio_path
 
 
+# Whisper prints each segment as "[MM:SS.mmm --> MM:SS.mmm] text", with an
+# "HH:" prefix only once the audio passes an hour, so hours are optional.
 _SEGMENT_END_RE = re.compile(
-    r"\[\d{1,2}:\d{2}:\d{2}\.\d{3}\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})\.(\d{3})\]"
+    r"\[(?:\d{1,2}:)?\d{2}:\d{2}\.\d{3}\s*-->\s*(?:(\d{1,2}):)?(\d{2}):(\d{2})\.(\d{3})\]"
 )
 
 _WHISPER_ERROR_PATTERNS = [
@@ -253,6 +259,9 @@ def transcribe(
         "--output_dir", str(audio_path.parent),
     ]
 
+    if on_progress:
+        on_progress(0.0, "Transcribing… 0%")
+
     lines: list[str] = []
     try:
         proc = subprocess.Popen(
@@ -276,7 +285,7 @@ def transcribe(
         if match and on_progress and total_duration > 0:
             hours, minutes, seconds, millis = match.groups()
             segment_end = (
-                int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(millis) / 1000
+                int(hours or 0) * 3600 + int(minutes) * 60 + int(seconds) + int(millis) / 1000
             )
             fraction = min(segment_end / total_duration, 0.99)
             on_progress(fraction, f"Transcribing… {fraction * 100:.0f}%")

@@ -485,6 +485,7 @@ function applyCutsResponse(data) {
   document.getElementById("resultPreview").style.display = "none";
 
   // Once skipped, step 4 stays out of the way on later re-cuts too.
+  hideBrollStep();
   if (state.addPartsSkipped) {
     showAudioStep();
   } else {
@@ -638,6 +639,8 @@ document.getElementById("loadAdditionsBtn").addEventListener("click", async () =
   const data = await response.json();
   state.additions = data.additions;
   resetChunksView();
+  hideBrollStep();
+  document.getElementById("stepAudioMode").style.display = "none";
   renderAdditions(data.section_titles);
 
   statusEl.textContent = [t("additions_status_loaded", { count: data.additions.length }), ...data.warnings].join(" ");
@@ -689,17 +692,24 @@ document.getElementById("skipAddPartsBtn").addEventListener("click", async () =>
   document.getElementById("additionsStatus").textContent = "";
   document.getElementById("continueAddPartsBtn").style.display = "none";
   document.getElementById("stepAddParts").style.display = "none";
+  hideBrollStep();
   showAudioStep();
 });
 
 document.getElementById("continueAddPartsBtn").addEventListener("click", () => {
   state.addPartsSkipped = false;
+  // New parts get a footage step (5) before audio; see broll.js.
+  if (state.additions.length) {
+    showBrollStep();
+    return;
+  }
   showAudioStep();
   document.getElementById("stepAudioMode").scrollIntoView({ behavior: "smooth" });
 });
 
 document.getElementById("backToAddPartsBtn").addEventListener("click", () => {
   state.addPartsSkipped = false;
+  hideBrollStep();
   document.getElementById("stepAudioMode").style.display = "none";
   showStep("stepAddParts");
   document.getElementById("stepAddParts").scrollIntoView({ behavior: "smooth" });

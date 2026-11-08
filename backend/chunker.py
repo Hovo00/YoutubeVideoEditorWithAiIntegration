@@ -71,6 +71,9 @@ class TextChunk:
     # from additions.md, with no video slot of its own (start == end == its
     # anchor, and the voice-over's own length decides how long it lasts).
     kind: str = "original"
+    # For an "added" chunk: its index in project["additions"] (where its
+    # picked footage is kept, see broll.py).
+    addition_index: int = -1
 
 
 def _resolve_chunk_time_overlaps(chunks: list[TextChunk]) -> None:

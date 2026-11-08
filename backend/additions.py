@@ -136,8 +136,9 @@ def merge_additions(chunks: list[TextChunk], additions: list[dict]) -> list[Text
             slot_duration=0.0,
             title=a["title"],
             kind="added",
+            addition_index=index,
         )
-        for a in additions
+        for index, a in enumerate(additions)
     ]
     keyed = [((c.start, 1), c) for c in chunks] + [((c.start, 0), c) for c in added]
     keyed.sort(key=lambda pair: pair[0])

@@ -186,9 +186,26 @@
       <div id="additionsView"></div>
     </section>
 
+    <section class="step" id="stepBroll" style="display:none">
+      <h2 data-i18n="broll_heading">5. Video for new parts (optional)</h2>
+      <p class="muted" data-i18n="broll_desc">
+        While a new part is spoken, the edited video pauses. Pick what's shown during that pause.
+      </p>
+      <div id="brollSourceList" class="source-chips"></div>
+      <div class="row">
+        <input type="text" id="brollUrlInput" data-i18n-placeholder="broll_url_placeholder" placeholder="Paste another YouTube link…" />
+        <button id="brollAddSourceBtn" data-i18n="broll_add_source_button">+ Add video</button>
+      </div>
+      <div id="brollStatus" class="muted"></div>
+      <div id="brollParts"></div>
+      <div class="row">
+        <button id="brollContinueBtn" data-i18n="broll_continue_button">Continue to audio</button>
+      </div>
+    </section>
+
     <section class="step" id="stepAudioMode" style="display:none">
       <div class="step-head">
-        <h2 data-i18n="step4_heading">5. Choose audio &amp; render</h2>
+        <h2 data-i18n="step4_heading">6. Choose audio &amp; render</h2>
         <button id="backToAddPartsBtn" class="link-btn" data-i18n="back_to_add_parts_button" style="display:none">&larr; Add new parts</button>
       </div>
       <div id="additionsAudioNote" class="muted" style="display:none"></div>
@@ -268,5 +285,6 @@
 
   <script src="/i18n.js"></script>
   <script src="/app.js"></script>
+  <script src="/broll.js"></script>
 </body>
 </html>

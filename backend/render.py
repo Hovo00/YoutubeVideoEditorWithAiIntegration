@@ -225,6 +225,84 @@ def get_frame_rate(video_path: str) -> str:
     return result.stdout.strip() or "30/1"
 
 
+def get_video_size(video_path: str) -> tuple[int, int]:
+    command = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=p=0:s=x",
+        video_path,
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+    except FileNotFoundError as exc:
+        raise FFmpegNotFoundError(
+            "ffprobe was not found on PATH. Install FFmpeg and make sure it is on PATH."
+        ) from exc
+    width, height = result.stdout.strip().split("x")[:2]
+    return int(width), int(height)
+
+
+def _broll_overlays(
+    timeline: Timeline,
+    inserts: list[tuple[float, float]],
+    insert_clips: list[list[tuple[str, float, float]]],
+    size: tuple[int, int],
+    frame_rate: str,
+    first_input_index: int,
+    base_label: str,
+    out_label: str,
+) -> tuple[list[str], list[str]]:
+    """Lays each insert's picked clips (video only) over the still frame the
+    timeline holds there, back to back from the insert's start. A clip is
+    trimmed where the insert ends; if the clips run out early, the last
+    clip's final frame is held until the insert ends.
+
+    Each clip is its own seeked input (`-ss`/`-t` before `-i`), so ffmpeg
+    only decodes the picked seconds, and `setpts` moves it to its output
+    time; `overlay` passes the main video through until a clip's first frame
+    arrives. Returns (extra input args, filter parts)."""
+    width, height = size
+    input_args: list[str] = []
+    parts: list[str] = []
+    current = base_label
+    input_index = first_input_index
+    count = 0
+
+    for insert_start, (_, insert_duration), clips in zip(timeline.insert_starts, inserts, insert_clips):
+        insert_end = insert_start + insert_duration
+        cursor = insert_start
+        placed = []
+        for path, start, end in clips:
+            length = min(end - start, insert_end - cursor)
+            if length < 0.05:
+                break
+            placed.append((path, start, length, cursor))
+            cursor += length
+
+        for position, (path, start, length, at) in enumerate(placed):
+            is_last = position == len(placed) - 1
+            show_until = insert_end if is_last else at + length
+            input_args += ["-ss", f"{start:.3f}", "-t", f"{length:.3f}", "-i", path]
+            clip_label = f"broll{count}"
+            next_label = f"vb{count}"
+            parts.append(
+                f"[{input_index}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={frame_rate},"
+                f"setpts=PTS-STARTPTS+{at:.6f}/TB[{clip_label}]"
+            )
+            parts.append(
+                f"[{current}][{clip_label}]overlay=eof_action=repeat:"
+                f"enable='between(t,{at:.6f},{show_until:.6f})'[{next_label}]"
+            )
+            current = next_label
+            input_index += 1
+            count += 1
+
+    parts.append(f"[{current}]null[{out_label}]")
+    return input_args, parts
+
+
 def _video_timeline_filter(timeline: Timeline, frame_rate: str, out_label: str) -> str:
     """Like _video_cut_filter, but kept pieces are placed at their timeline
     output positions, leaving gaps where inserts go. `fps` fills each gap by
@@ -292,6 +370,7 @@ def render_video_with_audio(
     music_path: str | None = None,
     music_db: float = -5.0,
     inserts: list[tuple[float, float]] | None = None,
+    insert_clips: list[list[tuple[str, float, float]]] | None = None,
 ) -> None:
     """Same video cutting as render_video, but with a custom audio mix:
     the original audio track (optional), a looped background music bed
@@ -304,6 +383,10 @@ def render_video_with_audio(
     `inserts` — (anchor, duration) pairs for added parts (see
     editor.build_timeline): the video holds a still frame for `duration`
     seconds at each anchor, and the original audio is silent there.
+
+    `insert_clips` — per insert (parallel to `inserts`), the (video path,
+    start, end) clips picked to show during it instead of the still frame
+    (see _broll_overlays). Their audio is never used.
     """
 
     if not keep_segments:
@@ -331,7 +414,18 @@ def render_video_with_audio(
     filter_parts = []
 
     if timeline:
-        filter_parts.append(_video_timeline_filter(timeline, get_frame_rate(input_path), "outv"))
+        frame_rate = get_frame_rate(input_path)
+        if insert_clips and any(insert_clips):
+            filter_parts.append(_video_timeline_filter(timeline, frame_rate, "basev"))
+            broll_inputs, broll_parts = _broll_overlays(
+                timeline, inserts, insert_clips, get_video_size(input_path), frame_rate,
+                next_input_index, "basev", "outv",
+            )
+            inputs += broll_inputs
+            next_input_index += broll_inputs.count("-i")
+            filter_parts += broll_parts
+        else:
+            filter_parts.append(_video_timeline_filter(timeline, frame_rate, "outv"))
     else:
         filter_parts.append(_video_cut_filter(keep_segments, "outv"))
 

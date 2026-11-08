@@ -124,8 +124,8 @@ const TRANSLATIONS = {
       "Ask Claude to write new spoken parts on top of the edited text — an intro, an outro, " +
       "recent news about the person… Your existing text stays exactly as it is: Claude only " +
       "writes the new parts to <code>workspace/additions.md</code>, each placed before or " +
-      "after one section. They get a voice-over like everything else; for now the video holds " +
-      "a still frame while a new part is spoken.",
+      "after one section. They get a voice-over like everything else, and in the next step you " +
+      "can pick the footage shown while each one is spoken.",
     add_parts_instruction_placeholder: "e.g. add a short intro, an outro, and his latest news",
     load_additions_button: "Load new parts",
     skip_add_parts_button: "Skip this step",
@@ -148,7 +148,47 @@ const TRANSLATIONS = {
       "{count} new part(s) included. They're spoken only with Automatic or Manual TTS; " +
       "\"Original audio\" renders without them.",
 
-    step4_heading: "5. Choose audio & render",
+    broll_heading: "5. Video for new parts (optional)",
+    broll_desc:
+      "While a new part is spoken, the edited video pauses. Pick what's shown during that pause: " +
+      "parts of the main video, or of any other YouTube video you add here. Only the picture is " +
+      "used — the voice-over is the sound. Drag the window on the timeline to choose a part, drag " +
+      "its edges to change its length, and add as many clips as you like. Anything not filled " +
+      "holds the last frame.",
+    broll_url_placeholder: "Paste another YouTube link…",
+    broll_add_source_button: "+ Add video",
+    broll_continue_button: "Continue to audio",
+    broll_source_main: "Main video",
+    broll_source_downloading: "downloading… {pct}%",
+    broll_source_failed: "failed",
+    broll_remove_source_title: "Remove this video and its clips",
+    broll_loading: "Measuring the new parts…",
+    broll_load_failed: "Could not load the footage picker: {detail}",
+    broll_needs: "≈ {seconds}s to fill",
+    broll_filled: "{filled}s of {needed}s filled",
+    broll_filled_over: "{filled}s picked for ≈ {needed}s — the end is trimmed to the voice-over",
+    broll_no_clips: "No footage yet — the video holds a still frame.",
+    broll_choose_button: "Choose footage",
+    broll_close_button: "Done",
+    broll_add_clip_button: "Add this clip",
+    broll_play_selection: "▶ Play window",
+    broll_pause: "❚❚ Pause",
+    broll_length_label: "Length",
+    broll_fill_rest_button: "Fill the rest",
+    broll_zoom_in_title: "Zoom in (or scroll on the timeline)",
+    broll_zoom_out_title: "Zoom out",
+    broll_zoom_fit_title: "Show the whole video",
+    broll_keys_hint: "←/→ move 0.1s · Shift+←/→ 1s · Space play · Enter add",
+    broll_source_not_ready: "This video is still downloading.",
+    broll_clip_preview_title: "Show in the picker",
+    broll_clip_up_title: "Play earlier",
+    broll_clip_down_title: "Play later",
+    broll_clip_remove_title: "Remove clip",
+    broll_save_failed: "Could not save clips: {detail}",
+    broll_add_source_failed: "Could not add the video: {detail}",
+    alert_need_broll_url: "Paste a YouTube link first.",
+
+    step4_heading: "6. Choose audio & render",
     audio_mode_original_option: "Original audio — just cut, keep the real audio",
     audio_mode_auto_option: "Automatic TTS — generate a voice-over for every chunk automatically",
     audio_mode_manual_option: "Manual TTS — edit/generate/upload voice-over per chunk yourself",
@@ -372,8 +412,8 @@ const TRANSLATIONS = {
       "Попросите Claude написать новые части поверх отредактированного текста — вступление, " +
       "заключение, последние новости о герое… Ваш текст остаётся без изменений: Claude пишет " +
       "только новые части в <code>workspace/additions.md</code>, каждую перед или после одного " +
-      "раздела. Они озвучиваются как и всё остальное; пока новая часть звучит, видео показывает " +
-      "стоп-кадр.",
+      "раздела. Они озвучиваются как и всё остальное, а на следующем шаге можно выбрать, какое " +
+      "видео показывать, пока звучит каждая из них.",
     add_parts_instruction_placeholder: "например: добавь короткое вступление, заключение и его последние новости",
     load_additions_button: "Загрузить новые части",
     skip_add_parts_button: "Пропустить этот шаг",
@@ -396,7 +436,47 @@ const TRANSLATIONS = {
       "Включено новых частей: {count}. Они озвучиваются только в режимах «Автоматическая озвучка» " +
       "или «Ручная озвучка»; «Оригинальная дорожка» рендерится без них.",
 
-    step4_heading: "5. Выберите звук и рендер",
+    broll_heading: "5. Видео для новых частей (необязательно)",
+    broll_desc:
+      "Пока звучит новая часть, отредактированное видео стоит на паузе. Выберите, что показывать " +
+      "в это время: фрагменты основного видео или любого другого видео с YouTube, добавленного " +
+      "здесь. Берётся только картинка — звук даёт озвучка. Перетаскивайте окно по шкале времени, " +
+      "чтобы выбрать фрагмент, тяните его края, чтобы изменить длину, и добавляйте сколько угодно " +
+      "клипов. Незаполненное время держит последний кадр.",
+    broll_url_placeholder: "Вставьте ещё одну ссылку YouTube…",
+    broll_add_source_button: "+ Добавить видео",
+    broll_continue_button: "Перейти к звуку",
+    broll_source_main: "Основное видео",
+    broll_source_downloading: "загрузка… {pct}%",
+    broll_source_failed: "ошибка",
+    broll_remove_source_title: "Убрать это видео и его клипы",
+    broll_loading: "Измеряю длину новых частей…",
+    broll_load_failed: "Не удалось открыть выбор видео: {detail}",
+    broll_needs: "≈ {seconds} с заполнить",
+    broll_filled: "заполнено {filled} с из {needed} с",
+    broll_filled_over: "выбрано {filled} с на ≈ {needed} с — конец обрежется по озвучке",
+    broll_no_clips: "Видео пока не выбрано — будет стоп-кадр.",
+    broll_choose_button: "Выбрать видео",
+    broll_close_button: "Готово",
+    broll_add_clip_button: "Добавить этот клип",
+    broll_play_selection: "▶ Проиграть окно",
+    broll_pause: "❚❚ Пауза",
+    broll_length_label: "Длина",
+    broll_fill_rest_button: "Заполнить остаток",
+    broll_zoom_in_title: "Приблизить (или прокрутите колесо над шкалой)",
+    broll_zoom_out_title: "Отдалить",
+    broll_zoom_fit_title: "Показать всё видео",
+    broll_keys_hint: "←/→ сдвиг 0,1 с · Shift+←/→ 1 с · Пробел — воспроизвести · Enter — добавить",
+    broll_source_not_ready: "Это видео ещё загружается.",
+    broll_clip_preview_title: "Показать в выборе",
+    broll_clip_up_title: "Раньше",
+    broll_clip_down_title: "Позже",
+    broll_clip_remove_title: "Удалить клип",
+    broll_save_failed: "Не удалось сохранить клипы: {detail}",
+    broll_add_source_failed: "Не удалось добавить видео: {detail}",
+    alert_need_broll_url: "Сначала вставьте ссылку YouTube.",
+
+    step4_heading: "6. Выберите звук и рендер",
     audio_mode_original_option: "Оригинальная дорожка — просто вырезать, сохранить реальный звук",
     audio_mode_auto_option: "Автоматическая озвучка — сгенерировать озвучку для каждого фрагмента автоматически",
     audio_mode_manual_option: "Ручная озвучка — редактируйте/генерируйте/загружайте озвучку для каждого фрагмента сами",

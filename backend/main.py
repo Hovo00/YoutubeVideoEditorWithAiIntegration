@@ -17,7 +17,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import azure_tts, duration_fit, youtube_ingest
+from . import azure_tts, broll, duration_fit, youtube_ingest
 from .additions import build_script, merge_additions, parse_additions
 from .chunker import TextChunk, chunk_by_outline, chunk_kept_cues, kept_cues
 from .editor import Cut, build_timeline, calculate_keep_segments, normalize_cuts, output_time
@@ -489,7 +489,13 @@ async def load_additions(project_id: str = Form(...), cuts_json: str = Form(...)
     if not additions:
         raise HTTPException(422, " ".join(warnings))
 
-    project["additions"] = [a.__dict__ for a in additions]
+    # Reloading the same parts keeps the footage already picked for them.
+    previous_clips = {
+        (a["title"], a["text"]): a.get("clips", []) for a in project.get("additions") or []
+    }
+    project["additions"] = [
+        {**a.__dict__, "clips": previous_clips.get((a.title, a.text), [])} for a in additions
+    ]
     _clear_chunk_audio()
     return {
         "additions": _public_additions(project),
@@ -506,6 +512,185 @@ async def clear_additions(project_id: str = Form(...)):
         project["additions"] = []
         _clear_chunk_audio()
     return {"additions": []}
+
+
+# --- Footage for added parts (B-roll, see broll.py) ------------------------
+
+# Local Piper voice families, by the language picked at ingest — used to
+# measure roughly how long each added part's voice-over will be.
+_PIPER_PREFIX_BY_LANGUAGE = {
+    "English": "en_", "Russian": "ru_", "Spanish": "es_", "French": "fr_", "German": "de_",
+    "Italian": "it_", "Portuguese": "pt_", "Ukrainian": "uk_", "Turkish": "tr_",
+}
+
+
+def _sources(project: dict) -> dict[str, dict]:
+    """Every video footage can be picked from: the main video first, then
+    the extra YouTube links in the order they were added."""
+    main = {
+        "id": broll.MAIN_SOURCE_ID,
+        "url": project.get("source_url"),
+        "title": "Main video",
+        "status": "ready" if project.get("video_path") else "downloading",
+        "progress": 1.0,
+        "message": "",
+        "error": None,
+        "path": project.get("video_path"),
+        "duration": project.get("duration"),
+        "has_filmstrip": True,  # made on first request
+    }
+    return {broll.MAIN_SOURCE_ID: main, **project.setdefault("sources", {})}
+
+
+def _public_source(source: dict) -> dict:
+    return {k: v for k, v in source.items() if k != "path"}
+
+
+def _get_source(project: dict, source_id: str) -> dict:
+    source = _sources(project).get(source_id)
+    if not source:
+        raise HTTPException(404, "Unknown video source.")
+    return source
+
+
+def _estimate_part_seconds(project: dict, addition: dict) -> float:
+    """Approximate voice-over length plus the pauses around it — how much
+    footage the part needs. Measured once per text with a local voice."""
+    cached = addition.get("estimate")
+    if cached and cached.get("text") == addition["text"]:
+        return cached["seconds"]
+
+    prefix = _PIPER_PREFIX_BY_LANGUAGE.get(project.get("language", ""))
+    voices = [v["name"] for v in list_available_voices()] if prefix else []
+    voice = next((v for v in voices if v.startswith(prefix)), None) if prefix else None
+
+    def measure(text: str) -> float | None:
+        if voice is None:
+            return None
+        CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+        path = CHUNK_AUDIO_DIR / "_broll_estimate.wav"
+        synthesize_to_wav(text, voice, str(path), rate=1.0)
+        try:
+            return get_duration(str(path))
+        finally:
+            path.unlink(missing_ok=True)
+
+    seconds = broll.estimate_seconds(addition["text"], measure) + 2 * INSERT_PAD_SECONDS
+    addition["estimate"] = {"text": addition["text"], "seconds": seconds}
+    return seconds
+
+
+@app.get("/api/broll")
+def broll_state(project_id: str):
+    """Everything the footage picker needs: the video sources and, per added
+    part, how long it roughly runs and the clips picked for it so far."""
+    project = _get_project(project_id)
+    additions = project.get("additions") or []
+
+    # The main video's timeline thumbnails take a few seconds the first time;
+    # start them now so they're usually ready when a picker opens.
+    main = _sources(project)[broll.MAIN_SOURCE_ID]
+    if main["path"] and not broll.filmstrip_path(main["path"]).exists():
+        threading.Thread(
+            target=broll.ensure_filmstrip, args=(main["path"], main["duration"]), daemon=True
+        ).start()
+
+    return {
+        "sources": [_public_source(s) for s in _sources(project).values()],
+        "parts": [
+            {
+                "index": index,
+                "title": a["title"],
+                "text": a["text"],
+                "estimate_seconds": _estimate_part_seconds(project, a),
+                "clips": a.get("clips", []),
+            }
+            for index, a in enumerate(additions)
+        ],
+    }
+
+
+@app.get("/api/broll/sources")
+def broll_sources(project_id: str):
+    """Polled while extra videos download."""
+    project = _get_project(project_id)
+    return {"sources": [_public_source(s) for s in _sources(project).values()]}
+
+
+@app.post("/api/broll/sources")
+def add_broll_source(project_id: str = Form(...), url: str = Form(...)):
+    project = _get_project(project_id)
+    url = url.strip()
+    if not url:
+        raise HTTPException(400, "Paste a YouTube link first.")
+
+    source = broll.new_source(url)
+    project.setdefault("sources", {})[source["id"]] = source
+    threading.Thread(
+        target=broll.download_source,
+        args=(source, LIBRARY_DIR, UPLOAD_DIR / project_id / "sources"),
+        daemon=True,
+    ).start()
+    return {"source": _public_source(source)}
+
+
+@app.post("/api/broll/sources/remove")
+def remove_broll_source(project_id: str = Form(...), source_id: str = Form(...)):
+    """Forgets an extra video, and every clip picked from it."""
+    project = _get_project(project_id)
+    if source_id == broll.MAIN_SOURCE_ID:
+        raise HTTPException(400, "The main video can't be removed.")
+    project.setdefault("sources", {}).pop(source_id, None)
+    for addition in project.get("additions") or []:
+        addition["clips"] = [c for c in addition.get("clips", []) if c.get("source_id") != source_id]
+    return broll_state(project_id)
+
+
+@app.get("/api/broll/sources/{project_id}/{source_id}/video")
+def broll_source_video(project_id: str, source_id: str):
+    source = _get_source(_get_project(project_id), source_id)
+    if source["status"] != "ready":
+        raise HTTPException(409, "This video isn't downloaded yet.")
+    return FileResponse(source["path"])
+
+
+@app.get("/api/broll/sources/{project_id}/{source_id}/filmstrip")
+def broll_source_filmstrip(project_id: str, source_id: str):
+    source = _get_source(_get_project(project_id), source_id)
+    if source["status"] != "ready":
+        raise HTTPException(409, "This video isn't downloaded yet.")
+    path = broll.ensure_filmstrip(source["path"], source["duration"])
+    if path is None:
+        raise HTTPException(500, "Could not make the timeline thumbnails.")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@app.post("/api/broll/clips")
+def set_broll_clips(project_id: str = Form(...), part_index: int = Form(...), clips_json: str = Form(...)):
+    """Replaces one added part's picked clips (in play order)."""
+    project = _get_project(project_id)
+    additions = project.get("additions") or []
+    if not 0 <= part_index < len(additions):
+        raise HTTPException(404, "No such new part.")
+    try:
+        raw = json.loads(clips_json)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Invalid clips JSON")
+
+    sources = _sources(project)
+    clips = []
+    for clip in raw:
+        source = sources.get(clip.get("source_id"))
+        if not source or source["status"] != "ready":
+            raise HTTPException(400, "A clip uses a video that isn't available.")
+        start = max(0.0, float(clip["start"]))
+        end = min(float(source["duration"]), float(clip["end"]))
+        if end - start < 0.1:
+            continue
+        clips.append({"source_id": source["id"], "start": round(start, 3), "end": round(end, 3)})
+
+    additions[part_index]["clips"] = clips
+    return {"clips": clips}
 
 
 @app.post("/api/transcript-chunks")
@@ -720,32 +905,42 @@ async def render(project_id: str = Form(...), cuts_json: str = Form(...)):
     return {"status": "started"}
 
 
+VoiceLayout = tuple[list[tuple[float, str]], list[tuple[float, float]], list[list[tuple[str, float, float]]]]
+
+
 def _voice_layout(
-    entries: list[tuple[str, float, Path | None]], keep_segments: list[tuple[float, float]]
-) -> tuple[list[tuple[float, str]], list[tuple[float, float]]]:
-    """entries: (kind, start, audio_path) per chunk, in chunk order.
-    Returns the voice overlays (output start, path) and the inserts
-    (anchor, duration) for render_video_with_audio. An added chunk only
-    becomes an insert once it has audio — its voice-over decides how long
-    the video pauses for it."""
+    project: dict,
+    entries: list[tuple[str, float, Path | None, int]],
+    keep_segments: list[tuple[float, float]],
+) -> VoiceLayout:
+    """entries: (kind, start, audio_path, addition_index) per chunk, in chunk
+    order. Returns the voice overlays (output start, path), the inserts
+    (anchor, duration) and each insert's picked footage (see broll.py) for
+    render_video_with_audio. An added chunk only becomes an insert once it
+    has audio — its voice-over decides how long the video pauses for it."""
     inserts = []
+    insert_clips = []
     added_audio = []
-    for kind, start, path in entries:
+    additions = project.get("additions") or []
+    sources = _sources(project)
+    for kind, start, path, addition_index in entries:
         if kind == "added" and path is not None:
             inserts.append((start, get_duration(str(path)) + 2 * INSERT_PAD_SECONDS))
             added_audio.append(path)
+            clips = additions[addition_index].get("clips", []) if 0 <= addition_index < len(additions) else []
+            insert_clips.append(broll.clip_inputs(clips, sources))
 
     timeline = build_timeline(keep_segments, inserts)
     overlays = [
         (output_time(start, keep_segments, inserts), str(path))
-        for kind, start, path in entries
+        for kind, start, path, _ in entries
         if kind != "added" and path is not None
     ]
     overlays += [
         (insert_start + INSERT_PAD_SECONDS, str(path))
         for insert_start, path in zip(timeline.insert_starts, added_audio)
     ]
-    return overlays, inserts
+    return overlays, inserts, insert_clips
 
 
 def _run_render_with_audio(
@@ -757,6 +952,7 @@ def _run_render_with_audio(
     music_path: str | None,
     music_db: float,
     inserts: list[tuple[float, float]],
+    insert_clips: list[list[tuple[str, float, float]]],
 ) -> None:
     project = PROJECTS[project_id]
     try:
@@ -769,6 +965,7 @@ def _run_render_with_audio(
             music_path,
             music_db,
             inserts,
+            insert_clips,
         )
         project["status"] = "done"
         project["output_path"] = str(output_path)
@@ -809,10 +1006,15 @@ async def render_with_audio(
     # that has audio to its position in the OUTPUT timeline.
     voice_overlays: list[tuple[float, str]] = []
     inserts: list[tuple[float, float]] = []
+    insert_clips: list[list[tuple[str, float, float]]] = []
     if project.get("vtt_text") and CHUNK_AUDIO_DIR.exists():
         chunks, _, _, _ = _build_voice_chunks(project, normalized)
-        voice_overlays, inserts = _voice_layout(
-            [(chunk.kind, chunk.start, _chunk_audio_path(index)) for index, chunk in enumerate(chunks)],
+        voice_overlays, inserts, insert_clips = _voice_layout(
+            project,
+            [
+                (chunk.kind, chunk.start, _chunk_audio_path(index), chunk.addition_index)
+                for index, chunk in enumerate(chunks)
+            ],
             keep_segments,
         )
 
@@ -843,6 +1045,7 @@ async def render_with_audio(
             music_path,
             music_db,
             inserts,
+            insert_clips,
         ),
         daemon=True,
     )
@@ -971,9 +1174,13 @@ def _auto_tts_chunk(run: dict, record: dict, force_rate: float | None = None) ->
     record["status"] = "accepted" if force_rate is not None else verdict
 
 
-def _auto_tts_layout(run: dict) -> tuple[list[tuple[float, str]], list[tuple[float, float]]]:
+def _auto_tts_layout(project: dict, run: dict) -> VoiceLayout:
     return _voice_layout(
-        [(r.get("kind", "original"), r["start"], _chunk_audio_path(r["index"])) for r in run["chunks"]],
+        project,
+        [
+            (r.get("kind", "original"), r["start"], _chunk_audio_path(r["index"]), r.get("addition_index", -1))
+            for r in run["chunks"]
+        ],
         run["keep_segments"],
     )
 
@@ -985,7 +1192,7 @@ def _auto_tts_render(project_id: str) -> None:
         project["status"] = "rendering"
         project["phase"] = "rendering"
         project["phase_message"] = "Rendering video…"
-        overlays, inserts = _auto_tts_layout(run)
+        overlays, inserts, insert_clips = _auto_tts_layout(project, run)
         render_video_with_audio(
             project["video_path"],
             str(run["output_path"]),
@@ -993,6 +1200,7 @@ def _auto_tts_render(project_id: str) -> None:
             False,
             overlays,
             inserts=inserts,
+            insert_clips=insert_clips,
         )
         project["status"] = "done"
         project["phase"] = "done"
@@ -1087,6 +1295,7 @@ def auto_tts(
                 "end": chunk.end,
                 "slot_duration": chunk.slot_duration,
                 "kind": chunk.kind,
+                "addition_index": chunk.addition_index,
                 "status": "pending",
                 "rate": None,
                 "estimate": None,

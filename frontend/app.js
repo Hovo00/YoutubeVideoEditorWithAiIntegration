@@ -5,8 +5,10 @@ const state = {
   pollTimer: null,
   cues: [], // {start, end, text} — raw Whisper cues, Mode 1
   outlineSections: [], // {level, title, start, end, body}
-  chunks: [], // {text, start, end, slot_duration, title}
+  chunks: [], // {text, start, end, slot_duration, title, kind}
   ttsVoices: [], // {name, label, provider}
+  additions: [], // {title, text, position, section, anchor} — step 4 new parts
+  addPartsSkipped: false,
 };
 
 function formatTime(seconds) {
@@ -477,13 +479,18 @@ function applyCutsResponse(data) {
   renderSummary(data);
   renderCutsTable();
   showStep("step3");
-  showStep("stepAudioMode");
 
   document.getElementById("renderStatus").textContent = "";
   document.getElementById("downloadLink").style.display = "none";
   document.getElementById("resultPreview").style.display = "none";
 
-  showAudioMode(document.getElementById("audioModeSelect").value);
+  // Once skipped, step 4 stays out of the way on later re-cuts too.
+  if (state.addPartsSkipped) {
+    showAudioStep();
+  } else {
+    document.getElementById("stepAudioMode").style.display = "none";
+    showStep("stepAddParts");
+  }
 }
 
 function renderWarnings(warnings) {
@@ -552,6 +559,151 @@ function renderCutsTable() {
     tbody.appendChild(tr);
   });
 }
+
+// --- Step 4 (optional): add new parts --------------------------------------
+// Claude writes only the new parts (workspace/additions.md), anchored before/
+// after numbered sections of workspace/script.md — the kept text itself is
+// never sent back, so it can't be altered.
+
+function enabledCutsFormValue() {
+  return JSON.stringify(
+    state.cuts.filter((c) => c.enabled).map((c) => ({ start: c.start, end: c.end }))
+  );
+}
+
+function showAudioStep() {
+  showStep("stepAudioMode");
+  document.getElementById("backToAddPartsBtn").style.display = state.addPartsSkipped ? "" : "none";
+
+  const note = document.getElementById("additionsAudioNote");
+  note.textContent = state.additions.length ? t("additions_audio_note", { count: state.additions.length }) : "";
+  note.style.display = state.additions.length ? "block" : "none";
+
+  showAudioMode(document.getElementById("audioModeSelect").value);
+}
+
+// Chunk indices shift when new parts come or go (the server drops the old
+// voice-over files for the same reason), so a listed chunk set is stale.
+function resetChunksView() {
+  state.chunks = [];
+  document.getElementById("chunksView").innerHTML = "";
+  document.getElementById("chunksStatus").textContent = "";
+}
+
+document.getElementById("copyAddPartsBtn").addEventListener("click", async (e) => {
+  const button = e.currentTarget;
+  const instruction = document.getElementById("addPartsInstructionInput").value.trim();
+  if (!instruction) {
+    alert(t("alert_need_add_instruction"));
+    return;
+  }
+
+  const statusEl = document.getElementById("additionsStatus");
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+  formData.append("cuts_json", enabledCutsFormValue());
+
+  // script.md must match the current cuts before Claude reads it.
+  const response = await fetch("/api/script", { method: "POST", body: formData });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    statusEl.textContent = t("additions_status_script_failed", { detail: err.detail || response.statusText });
+    return;
+  }
+  const data = await response.json();
+  statusEl.textContent = t("additions_status_script_written", { count: data.sections });
+
+  const prompt =
+    "Read AI_EDITING_INSTRUCTIONS.md in this project folder if you haven't " +
+    "already this conversation, then do Mode 4 (add new parts) for this " +
+    "instruction: " + instruction;
+  copyToClipboard(prompt, button);
+});
+
+document.getElementById("loadAdditionsBtn").addEventListener("click", async () => {
+  const statusEl = document.getElementById("additionsStatus");
+  statusEl.textContent = t("additions_status_loading");
+
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+  formData.append("cuts_json", enabledCutsFormValue());
+
+  const response = await fetch("/api/additions/load", { method: "POST", body: formData });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    statusEl.textContent = t("additions_status_failed", { detail: err.detail || response.statusText });
+    return;
+  }
+
+  const data = await response.json();
+  state.additions = data.additions;
+  resetChunksView();
+  renderAdditions(data.section_titles);
+
+  statusEl.textContent = [t("additions_status_loaded", { count: data.additions.length }), ...data.warnings].join(" ");
+  document.getElementById("continueAddPartsBtn").style.display = "";
+});
+
+function renderAdditions(sectionTitles) {
+  const viewEl = document.getElementById("additionsView");
+  viewEl.innerHTML = "";
+
+  for (const addition of state.additions) {
+    const card = document.createElement("div");
+    card.className = "chunk-card added";
+
+    const head = document.createElement("div");
+    head.className = "chunk-head";
+    const tag = document.createElement("span");
+    tag.className = "added-tag";
+    tag.textContent = t("added_tag");
+    const titleEl = document.createElement("span");
+    titleEl.className = "chunk-index";
+    titleEl.textContent = addition.title;
+    const placeEl = document.createElement("span");
+    placeEl.className = "chunk-time";
+    placeEl.textContent = t(
+      addition.position === "before" ? "additions_position_before" : "additions_position_after",
+      { n: addition.section, title: sectionTitles[addition.section - 1] || "" }
+    );
+    head.append(tag, titleEl, placeEl);
+
+    const body = document.createElement("p");
+    body.className = "added-body";
+    body.textContent = addition.text;
+
+    card.append(head, body);
+    viewEl.appendChild(card);
+  }
+}
+
+document.getElementById("skipAddPartsBtn").addEventListener("click", async () => {
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+  await fetch("/api/additions/clear", { method: "POST", body: formData });
+
+  if (state.additions.length) resetChunksView();
+  state.additions = [];
+  state.addPartsSkipped = true;
+  document.getElementById("additionsView").innerHTML = "";
+  document.getElementById("additionsStatus").textContent = "";
+  document.getElementById("continueAddPartsBtn").style.display = "none";
+  document.getElementById("stepAddParts").style.display = "none";
+  showAudioStep();
+});
+
+document.getElementById("continueAddPartsBtn").addEventListener("click", () => {
+  state.addPartsSkipped = false;
+  showAudioStep();
+  document.getElementById("stepAudioMode").scrollIntoView({ behavior: "smooth" });
+});
+
+document.getElementById("backToAddPartsBtn").addEventListener("click", () => {
+  state.addPartsSkipped = false;
+  document.getElementById("stepAudioMode").style.display = "none";
+  showStep("stepAddParts");
+  document.getElementById("stepAddParts").scrollIntoView({ behavior: "smooth" });
+});
 
 // --- Audio-mode combobox ---------------------------------------------------
 
@@ -917,26 +1069,52 @@ function renderChunks() {
   const viewEl = document.getElementById("chunksView");
   viewEl.innerHTML = "";
 
+  // Original chunks are numbered on their own, matching script.md's §N.
+  let originalNumber = 0;
+
   state.chunks.forEach((chunk, index) => {
+    const isAdded = chunk.kind === "added";
+    if (!isAdded) originalNumber += 1;
     const card = document.createElement("div");
-    card.className = "chunk-card";
+    card.className = isAdded ? "chunk-card added" : "chunk-card";
 
     const head = document.createElement("div");
     head.className = "chunk-head";
 
     const indexEl = document.createElement("span");
     indexEl.className = "chunk-index";
-    indexEl.textContent = chunk.title || t("chunk_label", { n: index + 1 });
+    indexEl.textContent = chunk.title || t("chunk_label", { n: originalNumber });
 
     const timeEl = document.createElement("span");
     timeEl.className = "chunk-time";
-    timeEl.textContent = `${formatTime(chunk.start)} - ${formatTime(chunk.end)}`;
+    timeEl.textContent = isAdded
+      ? t("added_time_label", { time: formatTime(chunk.start) })
+      : `${formatTime(chunk.start)} - ${formatTime(chunk.end)}`;
 
     const slotEl = document.createElement("span");
     slotEl.className = "chunk-slot";
-    slotEl.textContent = t("slot_label", { duration: chunk.slot_duration.toFixed(1) });
+    slotEl.textContent = isAdded
+      ? t("added_slot_label")
+      : t("slot_label", { duration: chunk.slot_duration.toFixed(1) });
 
+    if (isAdded) {
+      const tag = document.createElement("span");
+      tag.className = "added-tag";
+      tag.textContent = t("added_tag");
+      head.append(tag);
+    }
     head.append(indexEl, timeEl, slotEl);
+
+    // A new part has no slot to fit: its voice-over sets how long the video
+    // pauses for it.
+    function showResult(result) {
+      if (isAdded) {
+        audioStatus.textContent = t("added_audio_result", { audio: result.audio_duration.toFixed(1) });
+        audioStatus.classList.remove("warning");
+      } else {
+        showAudioFitResult(audioStatus, result);
+      }
+    }
 
     const textEl = document.createElement("textarea");
     textEl.className = "chunk-text-input";
@@ -998,7 +1176,7 @@ function renderChunks() {
         return;
       }
 
-      showAudioFitResult(audioStatus, await response.json());
+      showResult(await response.json());
       refreshAudioPlayer();
     });
 
@@ -1083,7 +1261,7 @@ function renderChunks() {
             return;
           }
 
-          showAudioFitResult(audioStatus, await response.json());
+          showResult(await response.json());
           refreshAudioPlayer();
           if (provider === "azure") refreshAzureUsage();
         } finally {

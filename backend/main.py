@@ -18,8 +18,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import azure_tts, duration_fit, youtube_ingest
+from .additions import build_script, merge_additions, parse_additions
 from .chunker import TextChunk, chunk_by_outline, chunk_kept_cues, kept_cues
-from .editor import Cut, calculate_keep_segments, map_to_output_timeline, normalize_cuts
+from .editor import Cut, build_timeline, calculate_keep_segments, normalize_cuts, output_time
 from .parser import ParsedResponse, parse_ai_response, parse_outline, parse_vtt
 from .render import FFmpegNotFoundError, get_duration, render_video, render_video_with_audio
 from .tts import KNOWN_VOICES as PIPER_KNOWN_VOICES
@@ -45,7 +46,15 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 WORKSPACE_DIR = BASE_DIR / "workspace"
 OUTLINE_PATH = WORKSPACE_DIR / "outline.md"
 CUTS_PATH = WORKSPACE_DIR / "cuts.md"
+# Mode 4 (new parts): the app writes the kept text to script.md, Claude
+# answers with additions.md (see backend/additions.py).
+SCRIPT_PATH = WORKSPACE_DIR / "script.md"
+ADDITIONS_PATH = WORKSPACE_DIR / "additions.md"
 CHUNK_AUDIO_DIR = WORKSPACE_DIR / "chunk_audio"
+
+# Silence around an added part's voice-over (each side), so it doesn't butt
+# straight against the original speech.
+INSERT_PAD_SECONDS = 0.3
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
@@ -79,6 +88,8 @@ def _mirror_into_workspace(video_path: Path, vtt_text: str) -> None:
     (WORKSPACE_DIR / "subtitles.vtt").write_text(vtt_text, encoding="utf-8")
     OUTLINE_PATH.unlink(missing_ok=True)
     CUTS_PATH.unlink(missing_ok=True)
+    SCRIPT_PATH.unlink(missing_ok=True)
+    ADDITIONS_PATH.unlink(missing_ok=True)
     shutil.rmtree(CHUNK_AUDIO_DIR, ignore_errors=True)
 
 
@@ -229,7 +240,29 @@ async def cues_cut(project_id: str = Form(...), cues_json: str = Form(...)):
     if not cuts:
         raise HTTPException(400, "No cues selected.")
 
+    cuts.extend(_untranscribed_edge_cuts(project))
+
     return _build_cuts_response(cuts, project["duration"])
+
+
+def _untranscribed_edge_cuts(project: dict) -> list[Cut]:
+    """Cuts for the video before the first cue and after the last one (Mode 1
+    and Mode 3). Nothing is said there, so there is no cue the user or the AI
+    could remove — without this, e.g. an end screen after the last words
+    would stay in the edited video. Pauses between cues are left alone."""
+    duration = project.get("duration")
+    cues = parse_vtt(project.get("vtt_text") or "")
+    if not duration or not cues:
+        return []
+
+    first_start = min(c.start for c in cues)
+    last_end = max(c.end for c in cues)
+    cuts: list[Cut] = []
+    if first_start >= MIN_UNCOVERED_SECONDS:
+        cuts.append(Cut(start=0.0, end=first_start, reason=NO_TEXT_REASON))
+    if duration - last_end >= MIN_UNCOVERED_SECONDS:
+        cuts.append(Cut(start=last_end, end=duration, reason=NO_TEXT_REASON))
+    return cuts
 
 
 def _build_cuts_response(
@@ -256,13 +289,14 @@ def _build_cuts_response(
     }
 
 
-def _cuts_response(parsed: ParsedResponse, duration: float) -> dict:
+def _cuts_response(parsed: ParsedResponse, project: dict) -> dict:
     cuts = [
         Cut(start=r.start, end=r.end, text=r.text, reason=r.reason)
         for r in parsed.removed
     ]
+    cuts.extend(_untranscribed_edge_cuts(project))
     return _build_cuts_response(
-        cuts, duration, warnings=parsed.warnings, change_log=parsed.change_log, questions=parsed.questions
+        cuts, project["duration"], warnings=parsed.warnings, change_log=parsed.change_log, questions=parsed.questions
     )
 
 
@@ -270,7 +304,7 @@ def _cuts_response(parsed: ParsedResponse, duration: float) -> dict:
 async def parse_ai_text(project_id: str = Form(...), ai_response: str = Form(...)):
     project = _get_project(project_id)
     parsed = parse_ai_response(ai_response)
-    return _cuts_response(parsed, project["duration"])
+    return _cuts_response(parsed, project)
 
 
 @app.get("/api/workspace/video")
@@ -330,16 +364,54 @@ async def outline_cuts(project_id: str = Form(...), sections_json: str = Form(..
     if not cuts:
         raise HTTPException(400, "No sections selected.")
 
+    cuts.extend(_uncovered_by_outline_cuts(project["duration"]))
+
     return _build_cuts_response(cuts, project["duration"])
 
 
-def _build_voice_chunks(project: dict, normalized_cuts: list[Cut]) -> tuple[list[TextChunk], int, int, str]:
+# Gaps shorter than this between outline sections are timing noise, not
+# untranscribed video worth cutting.
+MIN_UNCOVERED_SECONDS = 0.05
+NO_TEXT_REASON = "No transcript text in this part"
+
+
+def _uncovered_by_outline_cuts(duration: float | None) -> list[Cut]:
+    """Cuts for the parts of the video that no outline section covers — e.g.
+    an end screen or outro music after the last transcribed words. With no
+    text there, they can't appear in the outline, so the user could never
+    tick them off; leaving them in would tack them onto the edited video."""
+    if not duration or not OUTLINE_PATH.exists():
+        return []
+
+    sections = parse_outline(OUTLINE_PATH.read_text(encoding="utf-8"))
+    ranges = sorted((s.start, s.end) for s in sections if s.end > s.start)
+    if not ranges:
+        return []
+
+    cuts: list[Cut] = []
+    position = 0.0
+    for start, end in ranges:
+        if start - position >= MIN_UNCOVERED_SECONDS:
+            cuts.append(Cut(start=position, end=start, reason=NO_TEXT_REASON))
+        position = max(position, end)
+    if duration - position >= MIN_UNCOVERED_SECONDS:
+        cuts.append(Cut(start=position, end=duration, reason=NO_TEXT_REASON))
+    return cuts
+
+
+def _build_voice_chunks(
+    project: dict, normalized_cuts: list[Cut], include_additions: bool = True
+) -> tuple[list[TextChunk], int, int, str]:
     """One chunk per outline paragraph/sub-paragraph when workspace/outline.md
     exists and parses (matching whatever granularity the AI outline already
     chose), otherwise falls back to ~500-character chunks. Used both when
     generating/listing chunks and when re-deriving chunk indices at render
     time — these must stay in lockstep, or a chunk's audio could get
-    matched to the wrong index."""
+    matched to the wrong index.
+
+    With `include_additions`, the project's loaded new parts (Mode 4) are
+    slotted in as extra "added" chunks. Without it, this is exactly the list
+    script.md numbers its sections from."""
 
     all_cues = parse_vtt(project["vtt_text"])
     surviving_cues = kept_cues(all_cues, normalized_cuts)
@@ -355,7 +427,85 @@ def _build_voice_chunks(project: dict, normalized_cuts: list[Cut]) -> tuple[list
         chunks = chunk_kept_cues(surviving_cues)
         mode = "character-count"
 
+    if include_additions and project.get("additions"):
+        chunks = merge_additions(chunks, project["additions"])
+
     return chunks, len(surviving_cues), len(all_cues), mode
+
+
+def _parse_cuts(project: dict, cuts_json: str) -> list[Cut]:
+    try:
+        raw_cuts = json.loads(cuts_json)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Invalid cuts JSON")
+    cuts = [Cut(start=float(c["start"]), end=float(c["end"])) for c in raw_cuts]
+    return normalize_cuts(cuts, project["duration"])
+
+
+def _clear_chunk_audio() -> None:
+    """Voice-over files are keyed by chunk index; adding/removing new parts
+    shifts the indices, so old audio would land on the wrong chunk."""
+    if CHUNK_AUDIO_DIR.exists():
+        for old in CHUNK_AUDIO_DIR.glob("chunk_*"):
+            old.unlink()
+
+
+def _public_additions(project: dict) -> list[dict]:
+    return [
+        {k: a[k] for k in ("title", "text", "position", "section", "anchor")}
+        for a in project.get("additions") or []
+    ]
+
+
+@app.post("/api/script")
+async def write_script(project_id: str = Form(...), cuts_json: str = Form(...)):
+    """Writes workspace/script.md — the kept text as numbered sections — for
+    Claude to read in Mode 4 (adding new parts)."""
+    project = _get_project(project_id)
+    if not project.get("vtt_text"):
+        raise HTTPException(400, "No transcript yet for this project.")
+
+    chunks, _, _, _ = _build_voice_chunks(project, _parse_cuts(project, cuts_json), include_additions=False)
+    if not chunks:
+        raise HTTPException(400, "Nothing is left after the cuts — there's no script to add to.")
+
+    SCRIPT_PATH.write_text(build_script(chunks, project.get("language", "")), encoding="utf-8")
+    return {"sections": len(chunks)}
+
+
+@app.post("/api/additions/load")
+async def load_additions(project_id: str = Form(...), cuts_json: str = Form(...)):
+    """Reads Claude's workspace/additions.md against the same sections
+    script.md was numbered from, and makes those new parts part of the
+    project's voice-over chunks."""
+    project = _get_project(project_id)
+    if not ADDITIONS_PATH.exists():
+        raise HTTPException(404, "No additions.md yet — ask Claude to write the new parts first.")
+
+    chunks, _, _, _ = _build_voice_chunks(project, _parse_cuts(project, cuts_json), include_additions=False)
+    additions, warnings = parse_additions(
+        ADDITIONS_PATH.read_text(encoding="utf-8"), chunks, project["duration"]
+    )
+    if not additions:
+        raise HTTPException(422, " ".join(warnings))
+
+    project["additions"] = [a.__dict__ for a in additions]
+    _clear_chunk_audio()
+    return {
+        "additions": _public_additions(project),
+        "warnings": warnings,
+        "section_titles": [c.title for c in chunks],
+    }
+
+
+@app.post("/api/additions/clear")
+async def clear_additions(project_id: str = Form(...)):
+    """"Skip" in the app: render without any new parts."""
+    project = _get_project(project_id)
+    if project.get("additions"):
+        project["additions"] = []
+        _clear_chunk_audio()
+    return {"additions": []}
 
 
 @app.post("/api/transcript-chunks")
@@ -386,6 +536,7 @@ async def transcript_chunks(project_id: str = Form(...), cuts_json: str = Form(.
                 "end": c.end,
                 "slot_duration": c.slot_duration,
                 "title": c.title,
+                "kind": c.kind,
             }
             for c in chunks
         ],
@@ -525,7 +676,7 @@ async def workspace_cuts(project_id: str):
 
     text = CUTS_PATH.read_text(encoding="utf-8")
     parsed = parse_ai_response(text)
-    return _cuts_response(parsed, project["duration"])
+    return _cuts_response(parsed, project)
 
 
 def _run_render(project_id: str, keep_segments: list[tuple[float, float]], output_path: Path) -> None:
@@ -569,6 +720,34 @@ async def render(project_id: str = Form(...), cuts_json: str = Form(...)):
     return {"status": "started"}
 
 
+def _voice_layout(
+    entries: list[tuple[str, float, Path | None]], keep_segments: list[tuple[float, float]]
+) -> tuple[list[tuple[float, str]], list[tuple[float, float]]]:
+    """entries: (kind, start, audio_path) per chunk, in chunk order.
+    Returns the voice overlays (output start, path) and the inserts
+    (anchor, duration) for render_video_with_audio. An added chunk only
+    becomes an insert once it has audio — its voice-over decides how long
+    the video pauses for it."""
+    inserts = []
+    added_audio = []
+    for kind, start, path in entries:
+        if kind == "added" and path is not None:
+            inserts.append((start, get_duration(str(path)) + 2 * INSERT_PAD_SECONDS))
+            added_audio.append(path)
+
+    timeline = build_timeline(keep_segments, inserts)
+    overlays = [
+        (output_time(start, keep_segments, inserts), str(path))
+        for kind, start, path in entries
+        if kind != "added" and path is not None
+    ]
+    overlays += [
+        (insert_start + INSERT_PAD_SECONDS, str(path))
+        for insert_start, path in zip(timeline.insert_starts, added_audio)
+    ]
+    return overlays, inserts
+
+
 def _run_render_with_audio(
     project_id: str,
     keep_segments: list[tuple[float, float]],
@@ -577,6 +756,7 @@ def _run_render_with_audio(
     voice_overlays: list[tuple[float, str]],
     music_path: str | None,
     music_db: float,
+    inserts: list[tuple[float, float]],
 ) -> None:
     project = PROJECTS[project_id]
     try:
@@ -588,6 +768,7 @@ def _run_render_with_audio(
             voice_overlays,
             music_path,
             music_db,
+            inserts,
         )
         project["status"] = "done"
         project["output_path"] = str(output_path)
@@ -627,19 +808,13 @@ async def render_with_audio(
     # voice-over (same cuts -> same chunk indices), then map each chunk
     # that has audio to its position in the OUTPUT timeline.
     voice_overlays: list[tuple[float, str]] = []
+    inserts: list[tuple[float, float]] = []
     if project.get("vtt_text") and CHUNK_AUDIO_DIR.exists():
         chunks, _, _, _ = _build_voice_chunks(project, normalized)
-
-        for index, chunk in enumerate(chunks):
-            matches = [
-                path
-                for path in CHUNK_AUDIO_DIR.glob(f"chunk_{index:04d}.*")
-                if not path.name.startswith("_music")
-            ]
-            if not matches:
-                continue
-            output_start = map_to_output_timeline(chunk.start, keep_segments)
-            voice_overlays.append((output_start, str(matches[0])))
+        voice_overlays, inserts = _voice_layout(
+            [(chunk.kind, chunk.start, _chunk_audio_path(index)) for index, chunk in enumerate(chunks)],
+            keep_segments,
+        )
 
     music_path = None
     if music is not None:
@@ -667,6 +842,7 @@ async def render_with_audio(
             voice_overlays,
             music_path,
             music_db,
+            inserts,
         ),
         daemon=True,
     )
@@ -736,6 +912,18 @@ def _auto_tts_chunk(run: dict, record: dict, force_rate: float | None = None) ->
         old.unlink()
     record.update(audio_duration=None, has_audio=False, message=None)
 
+    if record.get("kind") == "added":
+        # A new part has no video window to fit: the video pauses for as
+        # long as its voice-over runs, so it's simply spoken at normal speed.
+        rate = force_rate or 1.0
+        audio_path = _synthesize_chunk(index, record["text"], voice, rate=rate)
+        if is_azure:
+            run["azure_chars"] += len(record["text"])
+        record.update(
+            rate=rate, estimate=None, audio_duration=get_duration(str(audio_path)), has_audio=True, status="ok"
+        )
+        return
+
     if force_rate is None:
         estimator = _estimator_voice(voice)
         if estimator is None:
@@ -783,15 +971,11 @@ def _auto_tts_chunk(run: dict, record: dict, force_rate: float | None = None) ->
     record["status"] = "accepted" if force_rate is not None else verdict
 
 
-def _auto_tts_overlays(run: dict) -> list[tuple[float, str]]:
-    overlays = []
-    for record in run["chunks"]:
-        audio_path = _chunk_audio_path(record["index"])
-        if audio_path is None:
-            continue
-        output_start = map_to_output_timeline(record["start"], run["keep_segments"])
-        overlays.append((output_start, str(audio_path)))
-    return overlays
+def _auto_tts_layout(run: dict) -> tuple[list[tuple[float, str]], list[tuple[float, float]]]:
+    return _voice_layout(
+        [(r.get("kind", "original"), r["start"], _chunk_audio_path(r["index"])) for r in run["chunks"]],
+        run["keep_segments"],
+    )
 
 
 def _auto_tts_render(project_id: str) -> None:
@@ -801,12 +985,14 @@ def _auto_tts_render(project_id: str) -> None:
         project["status"] = "rendering"
         project["phase"] = "rendering"
         project["phase_message"] = "Rendering video…"
+        overlays, inserts = _auto_tts_layout(run)
         render_video_with_audio(
             project["video_path"],
             str(run["output_path"]),
             run["keep_segments"],
             False,
-            _auto_tts_overlays(run),
+            overlays,
+            inserts=inserts,
         )
         project["status"] = "done"
         project["phase"] = "done"
@@ -900,6 +1086,7 @@ def auto_tts(
                 "start": chunk.start,
                 "end": chunk.end,
                 "slot_duration": chunk.slot_duration,
+                "kind": chunk.kind,
                 "status": "pending",
                 "rate": None,
                 "estimate": None,

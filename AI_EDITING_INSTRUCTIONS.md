@@ -13,6 +13,9 @@
 > - **Mode 3 — Autonomous duration-targeted edit**: decide what to cut
 >   yourself from a holistic instruction (e.g. "trim this to about 15
 >   minutes, keep only the important information").
+> - **Mode 4 — Add new parts**: after cutting, write brand-new spoken parts
+>   (an intro, an outro, recent news about the person...) to be inserted
+>   into the already-edited script, without touching any existing text.
 >
 > (The app also has a **Mode 1**, fully manual cue-by-cue cutting with no AI
 > involved at all — nothing in this file applies to that mode.)
@@ -69,6 +72,8 @@ each time:
 - **"Mode 3"** (or just a plain editing instruction) means: apply the
   instruction and produce `REMOVED`/`CHANGE_LOG` per "Expected output
   format" below, writing it to a file as well as replying in chat.
+- **"Mode 4"** means: do exactly what "Mode 4 — Add new parts" below
+  describes, for the instruction given with it.
 
 **If you don't have file access** (e.g. plain ChatGPT/Gemini web chat) —
 ignore the mode names; just use the TRANSCRIPT + INSTRUCTION template at
@@ -573,6 +578,77 @@ original TRANSCRIPT again, plus the `REMOVED` list from the last reply you
 got, so the new session has the prior cuts as context. Treat that combination
 the same as a first request — apply rule 9 the same way, folding the pasted
 prior cuts into your new cumulative list.
+
+---
+
+### Mode 4 — Add new parts
+
+When asked to do "Mode 4" with an instruction (e.g. "add an intro and an
+outro, and a part about his latest fight"):
+
+1. Read `workspace/script.md`. The app writes it: the text that is left
+   after the user's cuts, as numbered sections `## [N] Title (start - end)`.
+   It is **read only** — never edit it, and never write
+   `workspace/outline.md` or `workspace/cuts.md` in this mode.
+2. Write **only the new parts** to `workspace/additions.md`. Existing text
+   is kept by the app exactly as it is; anything you'd change in it has no
+   effect, so don't copy, rephrase, shorten or "smooth over" existing
+   sections — not even to make a new part flow into them. Each new part is
+   one block anchored to a section number:
+
+   ```markdown
+   ## NEW before 1 | <title>
+   <the new text, exactly as it should be spoken>
+
+   ## NEW after 7 | <title>
+   <the new text>
+
+   ## NEW after 12 | <title>
+   <the new text>
+
+   ## SOURCES
+   - <URL or source for every fact that isn't from script.md>
+
+   ## NOTES
+   - <one line per new part: what it is and its estimated spoken length>
+   ```
+
+   - `before N` / `after N` places the part right before / after section
+     N. `before 1` is the very start of the video (an intro), `after <last
+     section>` is the very end (an outro). Several parts can share a place;
+     they play in the order you list them.
+   - Pick the place where the new part makes sense in the story — e.g.
+     background information right before the section where it's first
+     needed, not just at the start or end.
+   - Any heading that isn't `## NEW ...` (SOURCES, NOTES, QUESTIONS) ends
+     the previous block and is never read aloud.
+3. Write new text in the **same language as script.md** (its `Language:`
+   line), in the same tone and voice as the video — it will be spoken by
+   the same text-to-speech voice, between the original parts.
+4. **Write for text-to-speech**, exactly as Mode 2's "Spelling for
+   text-to-speech" section describes: `ё` wherever it's pronounced, full
+   sentence punctuation, and nothing that shouldn't be read aloud — no
+   markdown, bullet points, brackets, emoji or `{corrected: ...}` notes in
+   a block's text. Write numbers, dates and abbreviations the way they
+   should be pronounced when the digits could be read wrongly (e.g. «десятого
+   октября тысяча девятьсот восемьдесят пятого года» rather than
+   «10.10.1985»).
+5. **Length.** Speech runs at roughly 130–150 words per minute. Unless the
+   instruction says otherwise, keep an intro or outro to about 15–40
+   seconds and any other new part to about 20–60 seconds. Each new part
+   pauses the video for as long as it's spoken, so longer isn't better.
+6. **Facts must be real.** For anything that isn't already in script.md
+   (e.g. "recent news about him"), use web search if you have it, and list
+   your sources under `## SOURCES`. Never invent results, dates, quotes or
+   events. If you can't verify something, leave it out and say so under
+   `## QUESTIONS` instead of guessing. Mention how recent the information
+   is where it matters ("as of <month year>").
+7. After writing the file, reply in chat with a short summary: each new
+   part's place, title and estimated length, plus any QUESTIONS.
+
+If the user asks for changes afterwards ("make the intro shorter", "move
+the news after section 5"), rewrite the whole `workspace/additions.md` —
+the app always loads the latest version of the file.
 
 ---
 

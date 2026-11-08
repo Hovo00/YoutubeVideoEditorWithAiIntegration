@@ -328,3 +328,44 @@ td.time {
 .chunk-card.flagged {
   border-left-color: #e55;
 }
+
+/* --- Added parts (step 4) ------------------------------------------------ */
+
+.step-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.link-btn {
+  background: none;
+  color: #7aa2f7;
+  padding: 4px 0;
+  font-weight: normal;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.chunk-card.added {
+  border-left-color: #f59e0b;
+}
+
+.added-tag {
+  font-size: 0.75em;
+  font-weight: bold;
+  color: #111;
+  background: #f59e0b;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.added-body {
+  margin: 8px 0 0;
+  color: #ddd;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}

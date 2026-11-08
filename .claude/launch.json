@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["run.py"],
       "port": 8000
+    },
+    {
+      "name": "videoeditory-windows",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["run.py"],
+      "port": 8000
     }
   ]
 }

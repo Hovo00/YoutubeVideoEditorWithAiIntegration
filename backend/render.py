@@ -9,6 +9,8 @@ import os
 import subprocess
 from typing import Callable
 
+from .editor import Timeline, build_timeline
+
 
 class FFmpegNotFoundError(RuntimeError):
     pass
@@ -203,6 +205,75 @@ def _audio_cut_filter(keep_segments: list[tuple[float, float]], out_label: str, 
     return ";".join(parts)
 
 
+def get_frame_rate(video_path: str) -> str:
+    """The video stream's frame rate as ffprobe reports it, e.g. "30/1"."""
+    command = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=r_frame_rate",
+        "-of", "csv=p=0",
+        video_path,
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+    except FileNotFoundError as exc:
+        raise FFmpegNotFoundError(
+            "ffprobe was not found on PATH. Install FFmpeg and make sure it is on PATH."
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"ffprobe failed: {exc.stderr}") from exc
+    return result.stdout.strip() or "30/1"
+
+
+def _video_timeline_filter(timeline: Timeline, frame_rate: str, out_label: str) -> str:
+    """Like _video_cut_filter, but kept pieces are placed at their timeline
+    output positions, leaving gaps where inserts go. `fps` fills each gap by
+    repeating the frame before it (the first frame for a gap at the start),
+    and `tpad` holds the last frame through a trailing gap — a still-frame
+    placeholder until inserts get footage of their own."""
+    keep = "+".join(f"gte(t,{start:.6f})*lt(t,{end:.6f})" for start, end, _ in timeline.pieces)
+
+    # Shift for each piece is (source start - output start); it changes in
+    # steps at each piece's source start.
+    first_start, _, first_out = timeline.pieces[0]
+    terms = [f"{first_start - first_out:.6f}"]
+    previous_shift = first_start - first_out
+    for start, _, out_start in timeline.pieces[1:]:
+        shift = start - out_start
+        terms.append(f"gte(T,{start:.6f})*({shift - previous_shift:.6f})")
+        previous_shift = shift
+
+    last_start, last_end, last_out = timeline.pieces[-1]
+    trailing = max(0.0, timeline.total - (last_out + last_end - last_start))
+    return (
+        f"[0:v]select='{keep}',setpts='PTS-({'+'.join(terms)})/TB',"
+        f"fps={frame_rate}:start_time=0,"
+        f"tpad=stop_mode=clone:stop_duration={trailing + 1:.3f},"
+        f"trim=duration={timeline.total:.6f}[{out_label}]"
+    )
+
+
+def _audio_timeline_filter(timeline: Timeline, out_label: str, aformat: str) -> str:
+    """Original audio for the kept pieces with silence in every insert gap."""
+    parts = []
+    labels = ""
+    cursor = 0.0
+    for index, (start, end, out_start) in enumerate(timeline.pieces):
+        gap = out_start - cursor
+        if gap > 0.001:
+            parts.append(f"anullsrc=channel_layout=stereo:sample_rate={_MIX_SAMPLE_RATE}:d={gap:.6f}[g{index}]")
+            labels += f"[g{index}]"
+        parts.append(f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,{aformat}[a{index}]")
+        labels += f"[a{index}]"
+        cursor = out_start + (end - start)
+    if timeline.total - cursor > 0.001:
+        parts.append(f"anullsrc=channel_layout=stereo:sample_rate={_MIX_SAMPLE_RATE}:d={timeline.total - cursor:.6f}[gend]")
+        labels += "[gend]"
+    count = labels.count("[")
+    parts.append(f"{labels}concat=n={count}:v=0:a=1[{out_label}]")
+    return ";".join(parts)
+
+
 def _source_input_args(input_path: str, keep_segments: list[tuple[float, float]]) -> list[str]:
     """`-i input`, limited to end just after the last kept segment, so
     ffmpeg doesn't decode a cut-off tail of the video for nothing.
@@ -220,20 +291,26 @@ def render_video_with_audio(
     voice_overlays: list[tuple[float, str]],
     music_path: str | None = None,
     music_db: float = -5.0,
+    inserts: list[tuple[float, float]] | None = None,
 ) -> None:
     """Same video cutting as render_video, but with a custom audio mix:
     the original audio track (optional), a looped background music bed
     (optional, attenuated by music_db), and per-chunk voice-over clips
     overlaid at their mapped position in the OUTPUT timeline (see
-    editor.map_to_output_timeline). The output audio always spans the full
-    video duration — built on a silent bed so it isn't truncated to
-    whichever optional source happens to be shortest.
+    editor.map_to_output_timeline / editor.output_time). The output audio
+    always spans the full video duration — built on a silent bed so it isn't
+    truncated to whichever optional source happens to be shortest.
+
+    `inserts` — (anchor, duration) pairs for added parts (see
+    editor.build_timeline): the video holds a still frame for `duration`
+    seconds at each anchor, and the original audio is silent there.
     """
 
     if not keep_segments:
         raise ValueError("Nothing left to render — every segment was cut.")
 
-    total_duration = sum(end - start for start, end in keep_segments)
+    timeline = build_timeline(keep_segments, inserts) if inserts else None
+    total_duration = timeline.total if timeline else sum(end - start for start, end in keep_segments)
     include_original_audio = keep_original_audio and has_audio_stream(input_path)
 
     inputs: list[str] = _source_input_args(input_path, keep_segments)
@@ -253,7 +330,10 @@ def render_video_with_audio(
 
     filter_parts = []
 
-    filter_parts.append(_video_cut_filter(keep_segments, "outv"))
+    if timeline:
+        filter_parts.append(_video_timeline_filter(timeline, get_frame_rate(input_path), "outv"))
+    else:
+        filter_parts.append(_video_cut_filter(keep_segments, "outv"))
 
     # Audio: always start from a full-length silent bed so the output track
     # reliably spans the whole video regardless of which optional sources
@@ -265,7 +345,10 @@ def render_video_with_audio(
     )
 
     if include_original_audio:
-        filter_parts.append(_audio_cut_filter(keep_segments, "origaudio", aformat))
+        if timeline:
+            filter_parts.append(_audio_timeline_filter(timeline, "origaudio", aformat))
+        else:
+            filter_parts.append(_audio_cut_filter(keep_segments, "origaudio", aformat))
         mix_labels.append("[origaudio]")
 
     if music_input_index is not None:

@@ -164,8 +164,34 @@
       </table>
     </section>
 
+    <section class="step" id="stepAddParts" style="display:none">
+      <h2 data-i18n="step_add_heading">4. Add new parts (optional)</h2>
+      <p class="muted" data-i18n-html="add_parts_desc_html">
+        Ask Claude to write new spoken parts on top of the edited text — an intro, an outro,
+        recent news about the person… Your existing text stays exactly as it is: Claude only
+        writes the new parts to <code>workspace/additions.md</code>, each placed before or
+        after one section. They get a voice-over like everything else; for now the video holds
+        a still frame while a new part is spoken.
+      </p>
+      <div class="row">
+        <input type="text" id="addPartsInstructionInput" data-i18n-placeholder="add_parts_instruction_placeholder" placeholder="e.g. add a short intro, an outro, and his latest news" />
+        <button id="copyAddPartsBtn" data-i18n="copy_message_button">Copy message for Claude</button>
+      </div>
+      <div class="row">
+        <button id="loadAdditionsBtn" data-i18n="load_additions_button">Load new parts</button>
+        <button id="skipAddPartsBtn" data-i18n="skip_add_parts_button">Skip this step</button>
+        <button id="continueAddPartsBtn" data-i18n="continue_add_parts_button" style="display:none">Continue</button>
+      </div>
+      <div id="additionsStatus" class="muted"></div>
+      <div id="additionsView"></div>
+    </section>
+
     <section class="step" id="stepAudioMode" style="display:none">
-      <h2 data-i18n="step4_heading">4. Choose audio &amp; render</h2>
+      <div class="step-head">
+        <h2 data-i18n="step4_heading">5. Choose audio &amp; render</h2>
+        <button id="backToAddPartsBtn" class="link-btn" data-i18n="back_to_add_parts_button" style="display:none">&larr; Add new parts</button>
+      </div>
+      <div id="additionsAudioNote" class="muted" style="display:none"></div>
       <div class="row">
         <select id="audioModeSelect">
           <option value="original" data-i18n="audio_mode_original_option">Original audio — just cut, keep the real audio</option>

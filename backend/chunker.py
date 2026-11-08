@@ -67,6 +67,10 @@ class TextChunk:
     end: float
     slot_duration: float
     title: str = ""
+    # "original" — text over a span of the source video; "added" — new text
+    # from additions.md, with no video slot of its own (start == end == its
+    # anchor, and the voice-over's own length decides how long it lasts).
+    kind: str = "original"
 
 
 def _resolve_chunk_time_overlaps(chunks: list[TextChunk]) -> None:

@@ -119,7 +119,36 @@ const TRANSLATIONS = {
       "Removed: <b>{removed}</b> &nbsp;·&nbsp; " +
       'New duration (if all cuts kept enabled): <b id="newDuration">{newDuration}</b>',
 
-    step4_heading: "4. Choose audio & render",
+    step_add_heading: "4. Add new parts (optional)",
+    add_parts_desc_html:
+      "Ask Claude to write new spoken parts on top of the edited text — an intro, an outro, " +
+      "recent news about the person… Your existing text stays exactly as it is: Claude only " +
+      "writes the new parts to <code>workspace/additions.md</code>, each placed before or " +
+      "after one section. They get a voice-over like everything else; for now the video holds " +
+      "a still frame while a new part is spoken.",
+    add_parts_instruction_placeholder: "e.g. add a short intro, an outro, and his latest news",
+    load_additions_button: "Load new parts",
+    skip_add_parts_button: "Skip this step",
+    continue_add_parts_button: "Continue",
+    back_to_add_parts_button: "← Add new parts",
+    alert_need_add_instruction: "Describe what to add first (e.g. an intro and an outro).",
+    additions_status_script_written:
+      "Wrote workspace/script.md ({count} sections). Paste the copied message into Claude, then click \"Load new parts\".",
+    additions_status_script_failed: "Could not write the script for Claude: {detail}",
+    additions_status_loading: "Loading new parts…",
+    additions_status_loaded: "Loaded {count} new part(s).",
+    additions_status_failed: "Could not load new parts: {detail}",
+    additions_position_before: "before §{n} {title}",
+    additions_position_after: "after §{n} {title}",
+    added_tag: "NEW",
+    added_time_label: "inserted at {time}",
+    added_slot_label: "length = its voice-over",
+    added_audio_result: "Voice-over is {audio}s — the video pauses this long for this new part.",
+    additions_audio_note:
+      "{count} new part(s) included. They're spoken only with Automatic or Manual TTS; " +
+      "\"Original audio\" renders without them.",
+
+    step4_heading: "5. Choose audio & render",
     audio_mode_original_option: "Original audio — just cut, keep the real audio",
     audio_mode_auto_option: "Automatic TTS — generate a voice-over for every chunk automatically",
     audio_mode_manual_option: "Manual TTS — edit/generate/upload voice-over per chunk yourself",
@@ -338,7 +367,36 @@ const TRANSLATIONS = {
       "Удалено: <b>{removed}</b> &nbsp;·&nbsp; " +
       'Новая длительность (если все вырезки включены): <b id="newDuration">{newDuration}</b>',
 
-    step4_heading: "4. Выберите звук и рендер",
+    step_add_heading: "4. Добавить новые части (необязательно)",
+    add_parts_desc_html:
+      "Попросите Claude написать новые части поверх отредактированного текста — вступление, " +
+      "заключение, последние новости о герое… Ваш текст остаётся без изменений: Claude пишет " +
+      "только новые части в <code>workspace/additions.md</code>, каждую перед или после одного " +
+      "раздела. Они озвучиваются как и всё остальное; пока новая часть звучит, видео показывает " +
+      "стоп-кадр.",
+    add_parts_instruction_placeholder: "например: добавь короткое вступление, заключение и его последние новости",
+    load_additions_button: "Загрузить новые части",
+    skip_add_parts_button: "Пропустить этот шаг",
+    continue_add_parts_button: "Продолжить",
+    back_to_add_parts_button: "← Добавить новые части",
+    alert_need_add_instruction: "Сначала опишите, что добавить (например, вступление и заключение).",
+    additions_status_script_written:
+      "Записан workspace/script.md ({count} разделов). Вставьте скопированное сообщение в Claude, затем нажмите «Загрузить новые части».",
+    additions_status_script_failed: "Не удалось записать текст для Claude: {detail}",
+    additions_status_loading: "Загрузка новых частей…",
+    additions_status_loaded: "Загружено новых частей: {count}.",
+    additions_status_failed: "Не удалось загрузить новые части: {detail}",
+    additions_position_before: "перед §{n} {title}",
+    additions_position_after: "после §{n} {title}",
+    added_tag: "НОВОЕ",
+    added_time_label: "вставка в {time}",
+    added_slot_label: "длина = озвучка",
+    added_audio_result: "Озвучка {audio} с — на столько видео остановится для этой новой части.",
+    additions_audio_note:
+      "Включено новых частей: {count}. Они озвучиваются только в режимах «Автоматическая озвучка» " +
+      "или «Ручная озвучка»; «Оригинальная дорожка» рендерится без них.",
+
+    step4_heading: "5. Выберите звук и рендер",
     audio_mode_original_option: "Оригинальная дорожка — просто вырезать, сохранить реальный звук",
     audio_mode_auto_option: "Автоматическая озвучка — сгенерировать озвучку для каждого фрагмента автоматически",
     audio_mode_manual_option: "Ручная озвучка — редактируйте/генерируйте/загружайте озвучку для каждого фрагмента сами",

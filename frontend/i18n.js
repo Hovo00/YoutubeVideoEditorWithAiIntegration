@@ -230,7 +230,13 @@ const TRANSLATIONS = {
       "{slot}s window. Add about {chars} characters.",
     auto_tts_flag_too_short_audio:
       "Too short — the voice-over is {audio}s at {rate}x, which leaves {gap}s of silence " +
-      "in the {slot}s window. Add about {chars} characters, or accept it.",
+      "in the {slot}s window. Add about {chars} characters, make pauses longer (||3), or accept it.",
+    auto_tts_pauses_note: "Voiced in {parts} parts with pauses (the ||seconds marks in the text).",
+    auto_tts_pause_help_html:
+      "Pauses: <code>||</code> in the text = pause here (length picked automatically), " +
+      "<code>||3</code> = pause exactly 3 seconds (<code>||1.5</code> works too). They're never read aloud. " +
+      "When a voice-over is too short for its window, it's voiced in parts with pauses, and the pauses " +
+      "it made are written into the text like this — change the numbers and click Recheck.",
     auto_tts_chunk_ok: "Fits — {audio}s at {rate}x, window {slot}s.",
     auto_tts_chunk_accepted: "Accepted as-is — {audio}s at {rate}x, window {slot}s.",
     auto_tts_unresolved: "Some chunks still need attention.",
@@ -519,7 +525,13 @@ const TRANSLATIONS = {
       "{slot} с. Добавьте примерно {chars} символов.",
     auto_tts_flag_too_short_audio:
       "Слишком коротко — озвучка {audio} с на {rate}x, остаётся {gap} с тишины в окне " +
-      "{slot} с. Добавьте примерно {chars} символов или примите.",
+      "{slot} с. Добавьте примерно {chars} символов, удлините паузы (||3) или примите.",
+    auto_tts_pauses_note: "Озвучено в {parts} частях с паузами (метки ||секунды в тексте).",
+    auto_tts_pause_help_html:
+      "Паузы: <code>||</code> в тексте — пауза здесь (длина подбирается автоматически), " +
+      "<code>||3</code> — пауза ровно 3 секунды (<code>||1.5</code> тоже можно). Они не читаются вслух. " +
+      "Если озвучка короче своего окна, она озвучивается частями с паузами, и сделанные паузы " +
+      "записываются в текст в таком виде — измените числа и нажмите «Проверить».",
     auto_tts_chunk_ok: "Подходит — {audio} с на {rate}x, окно {slot} с.",
     auto_tts_chunk_accepted: "Принято как есть — {audio} с на {rate}x, окно {slot} с.",
     auto_tts_unresolved: "Некоторые фрагменты всё ещё требуют внимания.",

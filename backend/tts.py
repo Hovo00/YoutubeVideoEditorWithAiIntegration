@@ -14,6 +14,9 @@ from pathlib import Path
 
 from piper import PiperVoice, SynthesisConfig
 
+from .pauses import strip_markers
+from .yo import add_yo
+
 VOICES_DIR = Path(__file__).resolve().parent.parent / "tts_voices"
 
 # Known voice names -> human label. Only the ones with a downloaded .onnx
@@ -97,6 +100,7 @@ def synthesize_to_wav(
 ) -> None:
     """`pace` overrides the calibrated per-voice pace (used by the
     calibration script while it searches for the right value)."""
+    text = add_yo(strip_markers(text))
     voice = _get_voice(voice_name)
     rate = rate if rate > 0 else 1.0
     stretch = (piper_pace(voice_name) if pace is None else pace) / rate

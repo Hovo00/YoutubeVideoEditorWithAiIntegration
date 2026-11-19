@@ -18,6 +18,9 @@ from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+from .pauses import strip_markers
+from .yo import add_yo
+
 # Russian voices currently offered by Azure AI Speech.
 KNOWN_VOICES = {
     "ru-RU-DmitryNeural": "Russian (Azure) — Dmitry (male)",
@@ -93,6 +96,7 @@ def synthesize_to_file(text: str, voice_name: str, output_path: str, rate: float
             "resource in the Azure Portal) and restart the app."
         )
 
+    text = add_yo(strip_markers(text))
     ssml = (
         '<speak version="1.0" xml:lang="ru-RU">'
         f'<voice name="{voice_name}">'

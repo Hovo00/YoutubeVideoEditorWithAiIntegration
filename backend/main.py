@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import tempfile
 import threading
+import wave
 import uuid
 from pathlib import Path
 
@@ -17,10 +20,17 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import azure_tts, broll, duration_fit, youtube_ingest
+from . import azure_tts, broll, duration_fit, pauses, youtube_ingest
 from .additions import build_script, merge_additions, parse_additions
 from .chunker import TextChunk, chunk_by_outline, chunk_kept_cues, kept_cues
-from .editor import Cut, build_timeline, calculate_keep_segments, normalize_cuts, output_time
+from .editor import (
+    Cut,
+    build_timeline,
+    calculate_keep_segments,
+    map_to_output_timeline,
+    normalize_cuts,
+    output_time,
+)
 from .parser import ParsedResponse, parse_ai_response, parse_outline, parse_vtt
 from .render import FFmpegNotFoundError, get_duration, render_video, render_video_with_audio
 from .tts import KNOWN_VOICES as PIPER_KNOWN_VOICES
@@ -50,6 +60,9 @@ CUTS_PATH = WORKSPACE_DIR / "cuts.md"
 # answers with additions.md (see backend/additions.py).
 SCRIPT_PATH = WORKSPACE_DIR / "script.md"
 ADDITIONS_PATH = WORKSPACE_DIR / "additions.md"
+# Written by Claude with the outline (Mode 2): where a voice-over may pause
+# when it is much shorter than its video window (see backend/pauses.py).
+PAUSES_PATH = WORKSPACE_DIR / "pauses.md"
 CHUNK_AUDIO_DIR = WORKSPACE_DIR / "chunk_audio"
 
 # Silence around an added part's voice-over (each side), so it doesn't butt
@@ -90,6 +103,7 @@ def _mirror_into_workspace(video_path: Path, vtt_text: str) -> None:
     CUTS_PATH.unlink(missing_ok=True)
     SCRIPT_PATH.unlink(missing_ok=True)
     ADDITIONS_PATH.unlink(missing_ok=True)
+    PAUSES_PATH.unlink(missing_ok=True)
     shutil.rmtree(CHUNK_AUDIO_DIR, ignore_errors=True)
 
 
@@ -798,16 +812,19 @@ def _synthesize_chunk(index: int, text: str, voice: str, rate: float = 1.0) -> P
     CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     for old in CHUNK_AUDIO_DIR.glob(f"chunk_{index:04d}.*"):
         old.unlink()
+    return _synthesize_to(CHUNK_AUDIO_DIR / f"chunk_{index:04d}", text, voice, rate)
 
+
+def _synthesize_to(base: Path, text: str, voice: str, rate: float) -> Path:
+    """Voices `text` to `base` + .wav (Piper) or .mp3 (Azure)."""
     if voice in PIPER_KNOWN_VOICES:
-        audio_path = CHUNK_AUDIO_DIR / f"chunk_{index:04d}.wav"
+        audio_path = base.with_suffix(".wav")
         synthesize_to_wav(text, voice, str(audio_path), rate=rate)
     elif voice in azure_tts.KNOWN_VOICES:
-        audio_path = CHUNK_AUDIO_DIR / f"chunk_{index:04d}.mp3"
+        audio_path = base.with_suffix(".mp3")
         azure_tts.synthesize_to_file(text, voice, str(audio_path), rate=rate)
     else:
         raise ValueError(f"Unknown voice: {voice}")
-
     return audio_path
 
 
@@ -1127,22 +1144,36 @@ def _auto_tts_chunk(run: dict, record: dict, force_rate: float | None = None) ->
         )
         return
 
+    text = record["text"]
+    speech = pauses.strip_markers(text)
+    has_markers = pauses.has_markers(text)
+    record.update(pauses=0, pause_source=None)
+
     if force_rate is None:
         estimator = _estimator_voice(voice)
+        # Pauses typed in the text (`||3`) take their seconds out of the window.
+        reserved = pauses.fixed_pause_total(text)
         if estimator is None:
             # Nothing to predict with: just generate at normal speed.
             choice = duration_fit.RateChoice(1.0, 0.0, "ok")
         else:
             CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
             estimate_path = CHUNK_AUDIO_DIR / _ESTIMATE_PATH_NAME
-            synthesize_to_wav(record["text"], estimator, str(estimate_path), rate=1.0)
+            synthesize_to_wav(speech, estimator, str(estimate_path), rate=1.0)
             duration_1x = get_duration(str(estimate_path))
             estimate_path.unlink(missing_ok=True)
             if is_azure:
                 duration_1x *= _azure_correction(run)
-            choice = duration_fit.choose_rate(duration_1x, window, voice if is_azure else None)
+            choice = duration_fit.choose_rate(duration_1x, window - reserved, voice if is_azure else None)
 
-        record.update(rate=choice.rate, estimate=choice.estimate)
+        record.update(rate=choice.rate, estimate=choice.estimate + reserved)
+        if choice.verdict == "too_long":
+            record["status"] = choice.verdict
+            return
+        # Too short: voice it in parts with pauses, and flag only the
+        # silence that is still left over (see backend/pauses.py).
+        if (choice.verdict == "too_short" or has_markers) and _auto_tts_with_pauses(run, record, choice.rate):
+            return
         if choice.verdict != "ok":
             record["status"] = choice.verdict
             return
@@ -1150,11 +1181,13 @@ def _auto_tts_chunk(run: dict, record: dict, force_rate: float | None = None) ->
     else:
         rate = force_rate
         record.update(rate=rate, estimate=None)
+        if has_markers and _auto_tts_with_pauses(run, record, rate, accept=True):
+            return
 
     def generate(at_rate: float) -> float:
-        audio_path = _synthesize_chunk(index, record["text"], voice, rate=at_rate)
+        audio_path = _synthesize_chunk(index, speech, voice, rate=at_rate)
         if is_azure:
-            run["azure_chars"] += len(record["text"])
+            run["azure_chars"] += len(speech)
         return get_duration(str(audio_path))
 
     audio_duration = generate(rate)
@@ -1170,8 +1203,81 @@ def _auto_tts_chunk(run: dict, record: dict, force_rate: float | None = None) ->
             audio_duration = generate(rate)
             verdict = duration_fit.judge_actual(audio_duration, window)
 
-    record.update(audio_duration=audio_duration, has_audio=True)
+    record.update(audio_duration=audio_duration, has_audio=True, text=speech)
     record["status"] = "accepted" if force_rate is not None else verdict
+
+
+_COMPOSE_SAMPLE_RATE = 24000
+
+
+def _compose_parts(paths: list[Path], starts: list[float], out_path: Path) -> None:
+    """One mono WAV: each part placed at its start time, silence between."""
+    with wave.open(str(out_path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(_COMPOSE_SAMPLE_RATE)
+        written = 0
+        for path, start in zip(paths, starts):
+            pcm = subprocess.run(
+                ["ffmpeg", "-v", "error", "-i", str(path), "-f", "s16le", "-ac", "1",
+                 "-ar", str(_COMPOSE_SAMPLE_RATE), "-"],
+                capture_output=True,
+                check=True,
+            ).stdout
+            silence = max(0, round(start * _COMPOSE_SAMPLE_RATE) - written)
+            out.writeframes(bytes(2 * silence))
+            out.writeframes(pcm)
+            written += silence + len(pcm) // 2
+
+
+def _auto_tts_with_pauses(run: dict, record: dict, rate: float, accept: bool = False) -> bool:
+    """Voice a chunk in parts with pauses between them (backend/pauses.py):
+    at its `||` markers if it has any, otherwise at the AI's pause hints or
+    at sentence ends. Afterwards the chunk's text shows every pause as
+    `||seconds`, so the user can see and change them. Returns False when
+    there's nothing to split (a single sentence)."""
+    voice = run["voice"]
+    is_azure = voice in azure_tts.KNOWN_VOICES
+    window = record["slot_duration"]
+    parts, source = pauses.split_into_parts(
+        record["text"], run.get("pause_hints", []), record["start"], record["end"]
+    )
+    if len(parts) < 2:
+        return False
+
+    target = window - duration_fit.FIT_MARGIN_SECONDS - duration_fit.FIT_MARGIN_FRACTION * window
+    keep = run["keep_segments"]
+    chunk_out = map_to_output_timeline(record["start"], keep)
+    offsets = [
+        None if part.resume is None else map_to_output_timeline(part.resume, keep) - chunk_out for part in parts
+    ]
+    fixed = [part.pause for part in parts]
+
+    CHUNK_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = CHUNK_AUDIO_DIR / f"chunk_{record['index']:04d}.wav"
+    with tempfile.TemporaryDirectory(dir=CHUNK_AUDIO_DIR) as tmp:
+        paths, durations = [], []
+        for number, part in enumerate(parts):
+            path = _synthesize_to(Path(tmp) / f"part_{number:02d}", part.text, voice, rate)
+            if is_azure:
+                run["azure_chars"] += len(part.text)
+            paths.append(path)
+            durations.append(get_duration(str(path)))
+        starts = pauses.plan_starts(durations, fixed, offsets, target, [part.preferred for part in parts])
+        _compose_parts(paths, starts, out_path)
+
+    audio_duration = get_duration(str(out_path))
+    shown_text = pauses.text_with_markers(parts, starts, durations)
+    record.update(
+        text=shown_text,
+        rate=rate,
+        audio_duration=audio_duration,
+        has_audio=True,
+        status="accepted" if accept else duration_fit.judge_actual(audio_duration, window),
+        pauses=len(pauses.MARKER_RE.findall(shown_text)),
+        pause_source=source,
+    )
+    return True
 
 
 def _auto_tts_layout(project: dict, run: dict) -> VoiceLayout:
@@ -1286,6 +1392,7 @@ def auto_tts(
         "output_path": OUTPUT_DIR / f"{project_id}_edited.mp4",
         "ratios": [],
         "azure_chars": 0,
+        "pause_hints": _load_pause_hints(),
         "chunks": [
             {
                 "index": index,
@@ -1310,6 +1417,12 @@ def auto_tts(
 
     threading.Thread(target=_run_auto_tts, args=(project_id,), daemon=True).start()
     return {"status": "started"}
+
+
+def _load_pause_hints() -> list[pauses.PauseHint]:
+    if not PAUSES_PATH.exists():
+        return []
+    return pauses.parse_pause_hints(PAUSES_PATH.read_text(encoding="utf-8"))
 
 
 def _get_auto_tts_run(project_id: str) -> tuple[dict, dict]:

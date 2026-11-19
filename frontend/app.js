@@ -850,7 +850,8 @@ function autoTtsChunkMessage(chunk, maxGap) {
     est: chunk.estimate != null ? chunk.estimate.toFixed(1) : "?",
     audio: chunk.audio_duration != null ? chunk.audio_duration.toFixed(1) : "?",
   };
-  const len = chunk.text.length;
+  // Pause markers (||, ||3) aren't spoken, so they don't count.
+  const len = spokenText(chunk.text).length;
 
   if (chunk.status === "too_long") {
     const target = slot - AUTO_TTS_FIT_MARGIN_SECONDS - 0.015 * slot;
@@ -862,10 +863,21 @@ function autoTtsChunkMessage(chunk, maxGap) {
     const target = slot - Math.min(AUTO_TTS_TARGET_GAP_SECONDS, maxGap);
     vars.chars = Math.max(1, Math.ceil(len * (target / duration - 1)));
     vars.gap = (slot - duration).toFixed(1);
-    return t(chunk.has_audio ? "auto_tts_flag_too_short_audio" : "auto_tts_flag_too_short_estimate", vars);
+    return t(chunk.has_audio ? "auto_tts_flag_too_short_audio" : "auto_tts_flag_too_short_estimate", vars) + pausesNote(chunk);
   }
-  if (chunk.status === "accepted") return t("auto_tts_chunk_accepted", vars);
-  return t("auto_tts_chunk_ok", vars);
+  if (chunk.status === "accepted") return t("auto_tts_chunk_accepted", vars) + pausesNote(chunk);
+  return t("auto_tts_chunk_ok", vars) + pausesNote(chunk);
+}
+
+// Pause markers in a chunk's text, see backend/pauses.py.
+const PAUSE_MARKER_RE = /\|\|(\d+(?:[.,]\d+)?)?/g;
+
+function spokenText(text) {
+  return text.replace(PAUSE_MARKER_RE, " ").replace(/\s+/g, " ").trim();
+}
+
+function pausesNote(chunk) {
+  return chunk.pauses ? " " + t("auto_tts_pauses_note", { parts: chunk.pauses + 1 }) : "";
 }
 
 async function loadAutoTtsReview() {
@@ -875,7 +887,7 @@ async function loadAutoTtsReview() {
   // Flagged chunks stay listed even after they're fixed, so the user can
   // see what they changed.
   state.autoTtsReviewIndices = state.autoTtsReview.chunks
-    .filter((c) => c.status !== "ok")
+    .filter((c) => c.status !== "ok" || c.pauses > 0)
     .map((c) => c.index);
   renderAutoTtsReview();
 }
@@ -923,7 +935,7 @@ function renderAutoTtsReviewCard(chunk, maxGap) {
   textEl.className = "chunk-text-input";
   textEl.value = chunk.text;
   textEl.rows = Math.min(10, Math.max(3, Math.ceil(chunk.text.length / 80)));
-  const updateChars = () => (charsEl.textContent = t("auto_tts_chars", { n: textEl.value.length }));
+  const updateChars = () => (charsEl.textContent = t("auto_tts_chars", { n: spokenText(textEl.value).length }));
   updateChars();
   textEl.addEventListener("input", updateChars);
 

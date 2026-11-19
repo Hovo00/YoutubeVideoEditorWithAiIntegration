@@ -1,0 +1,8 @@
+# Extra words for the ё safety net (backend/yo.py), applied right before
+# text-to-speech. Write each word WITH ё. A `*` at the end means "any
+# ending" (the word starts with it): боксёр* also fixes боксера, боксером.
+# Without `*` only that exact word is fixed. Several per line are fine.
+#
+# Only add words that are ALWAYS spelled with ё: "все" (everyone) vs
+# "всё" (everything) can't go here, since both are real words.
+

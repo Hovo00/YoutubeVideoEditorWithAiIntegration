@@ -9,7 +9,8 @@
 >
 > - **Mode 2 — Build a corrected outline**: structure the transcript into
 >   readable paragraphs with titles, correcting Whisper's transcription
->   mistakes as you go, so the user can review/remove whole sections.
+>   mistakes as you go, so the user can review/remove whole sections. Also
+>   writes `pauses.md`: where the voice-over may pause.
 > - **Mode 3 — Autonomous duration-targeted edit**: decide what to cut
 >   yourself from a holistic instruction (e.g. "trim this to about 15
 >   minutes, keep only the important information").
@@ -240,6 +241,27 @@ writing the file.
     and every other word whose correct pronunciation has `ё`.
   - Decide from context: `все` vs `всё`, `небо` vs `нёбо`, `узнаем` (we find
     out) vs `узнаём` (we recognize), `совершенный` vs `совершённый`.
+  - **Word families that are easy to miss** — check every one of these:
+    - nouns for people ending in stressed `-ёр`, in every form:
+      `кикбоксёр, кикбоксёром`, `боксёр`, `актёр`, `партнёр`, `режиссёр`,
+      `шофёр`, `дирижёр`, `стажёр`, `призёр`, `репортёр`, `контролёр`
+      (and `боксёрский`, `партнёрство`);
+    - stressed verb endings `-ёт / -ём / -ёте / -ёшь`: `идёт`, `пойдём`,
+      `живёт`, `даёт`, `поёт`, `ведёт`, `начнёт`, `поймёт`;
+    - `шёл / пошёл / нашёл / пришёл`, `ещё`, `её`, `неё`, `всё`, `моё`;
+    - stressed `-ён / -ённый` participles: `решён`, `освобождён`,
+      `приглашённый`, `обречённый`;
+    - genitive plurals and stems: `всех времён`, `звёзды` (but `звезда`),
+      `чёрный`, `жёлтый`, `лёгкий`, `чёткий`, `ребёнок`, `тётя`;
+    - names and surnames: `Пётр`, `Фёдор`, `Артём`, `Семён`, `Горбачёв`,
+      `Хрущёв`, `Королёв`, `Соловьёв`.
+  - **Final `ё` pass (mandatory, before saving the file):** re-read every
+    body text and title one more time looking *only* for `ё`. For each word
+    with an `е`, ask "is this `е` stressed and pronounced `ё`?" — fix it if
+    so. Do this as its own separate pass; it is the step most often skipped.
+    (The app also fixes a short list of common words automatically right
+    before voicing — see `backend/yo.py` and `tts_yo_words.txt` — but that
+    is only a safety net, never a reason to skip this pass.)
 - Make these and other pronunciation-relevant fixes **silently** (no
   `{corrected: ...}` markup). They are spelling, not content changes, and
   any markup in the body text could end up read aloud.
@@ -406,6 +428,50 @@ A boundary landing several cues away from the "obvious" topic-change point
 is a completely acceptable trade for this. **Getting sentences to end
 cleanly on both sides of every boundary is worth far more than keeping the
 topic-change point exact.**
+
+6. **Also write `workspace/pauses.md` — pause hints for the voice-over.**
+   In automatic TTS each paragraph/sub-paragraph is voiced over its own
+   video window. Sometimes the text is much shorter than the window — the
+   speaker paused, the video shows action, applause or music with no speech.
+   Then the app voices that paragraph in parts with pauses between them
+   instead of finishing early and leaving a long silence. This file tells it
+   where those pauses may go. For every paragraph/sub-paragraph that has a
+   body text (the same ones that get a text block in the outline):
+
+   ```markdown
+   # Pause hints
+
+   ## HH:MM:SS.mmm - HH:MM:SS.mmm | <same title as in outline.md>
+   - after: "<last 4–8 words of a sentence, copied exactly from the body text>" | resume: HH:MM:SS.mmm
+   - after: "<last 4–8 words of another sentence>"
+   ```
+
+   - `after:` quotes, **character for character from the body text you
+     wrote** (same spelling, same `ё`, same punctuation including the final
+     `.`/`?`/`!`), the end of a sentence after which a pause sounds natural:
+     a finished thought, a change of topic, a question before its answer. The
+     app finds the quote in the text, so it must be unique within that
+     paragraph — use more words if a short ending repeats. Never quote the
+     very last sentence of the paragraph (there's nothing after it).
+   - Add `| resume: <timestamp>` **only** when the transcript shows a real
+     stretch with no speech there — a gap of about 1.5 seconds or more
+     between the cue that ends this sentence and the next cue. The timestamp
+     is the start of the cue where speech resumes (a real cue timestamp from
+     subtitles.vtt). The app then starts the following text at that moment,
+     so the voice stays in step with the picture. If there's no such gap,
+     leave `resume` out — the app spreads short pauses on its own.
+   - List hints in text order. 1–4 per paragraph is typical; prefer the
+     strongest pause points (real speech gaps first, then topic changes,
+     then ordinary sentence ends). A one-sentence paragraph gets none — just
+     write its heading line with no hints, or leave it out.
+   - Never write `||` into outline.md itself: in the app, `||` / `||3` in a
+     chunk's text are pause marks the user types by hand. Pause points
+     belong in pauses.md only.
+   - Write nothing else in the file: no explanations, no body text. It is
+     parsed by the app; the `##` headings only help a human read it.
+   - If you later rewrite a paragraph's text, update its hints too — a quote
+     that no longer matches the text is ignored (the app then splits at
+     ordinary sentence ends instead).
 
 **Mode 2 never proposes cuts.** It only reads, describes, and (per the
 section above) lightly corrects — it never decides what to remove. Cut
@@ -589,7 +655,8 @@ outro, and a part about his latest fight"):
 1. Read `workspace/script.md`. The app writes it: the text that is left
    after the user's cuts, as numbered sections `## [N] Title (start - end)`.
    It is **read only** — never edit it, and never write
-   `workspace/outline.md` or `workspace/cuts.md` in this mode.
+   `workspace/outline.md`, `workspace/pauses.md` or `workspace/cuts.md` in
+   this mode.
 2. Write **only the new parts** to `workspace/additions.md`. Existing text
    is kept by the app exactly as it is; anything you'd change in it has no
    effect, so don't copy, rephrase, shorten or "smooth over" existing
@@ -626,8 +693,10 @@ outro, and a part about his latest fight"):
    line), in the same tone and voice as the video — it will be spoken by
    the same text-to-speech voice, between the original parts.
 4. **Write for text-to-speech**, exactly as Mode 2's "Spelling for
-   text-to-speech" section describes: `ё` wherever it's pronounced, full
-   sentence punctuation, and nothing that shouldn't be read aloud — no
+   text-to-speech" section describes: `ё` wherever it's pronounced
+   (including its mandatory final `ё` pass — e.g. `кикбоксёр`, `всех
+   времён`, `партнёр`), full sentence punctuation, and nothing that
+   shouldn't be read aloud — no
    markdown, bullet points, brackets, emoji or `{corrected: ...}` notes in
    a block's text. Write numbers, dates and abbreviations the way they
    should be pronounced when the digits could be read wrongly (e.g. «десятого

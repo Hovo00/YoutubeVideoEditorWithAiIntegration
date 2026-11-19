@@ -61,8 +61,33 @@
       <div id="videoInfo" class="muted"></div>
     </section>
 
+    <section class="step" id="stepProject" style="display:none">
+      <h2 data-i18n="step_project_heading">2. What do you want to make?</h2>
+      <div class="row">
+        <label for="workTypeSelect" data-i18n="work_type_label">Work type</label>
+        <select id="workTypeSelect">
+          <option value="revoice" data-i18n="work_type_revoice_option">Re-voice edit — cut bloopers and voice the video with TTS</option>
+          <option value="review" data-i18n="work_type_review_option">Review of a review — quote the reviewer and add AI review parts</option>
+        </select>
+      </div>
+      <p class="muted" id="workTypeDesc"></p>
+      <div class="row">
+        <label for="outputLanguageSelect" data-i18n="output_language_label">Output language</label>
+        <select id="outputLanguageSelect">
+          <option value="" data-i18n="output_language_same_option">Same as the video</option>
+          <option value="Russian" data-i18n="output_language_russian_option">Russian — Claude translates</option>
+        </select>
+      </div>
+      <p class="muted" id="outputLanguageDesc"></p>
+      <div class="row">
+        <button id="projectContinueBtn" data-i18n="project_continue_button">Continue</button>
+      </div>
+      <div id="projectStatus" class="muted"></div>
+    </section>
+
     <section class="step" id="stepEditMode" style="display:none">
-      <h2 data-i18n="step2_heading">2. Choose how to edit</h2>
+      <h2 data-i18n="step2_heading">3. Choose how to edit</h2>
+      <p class="muted" id="translationNote" style="display:none"></p>
       <div class="row">
         <select id="editModeSelect">
           <option value="manual" data-i18n="edit_mode_manual_option">Manual — delete parts yourself, no AI</option>
@@ -147,7 +172,7 @@
     </section>
 
     <section class="step" id="step3" style="display:none">
-      <h2 data-i18n="step3_heading">3. Review cuts</h2>
+      <h2 data-i18n="step3_heading">4. Review cuts</h2>
       <div id="summary" class="summary"></div>
 
       <table id="cutsTable">
@@ -165,8 +190,8 @@
     </section>
 
     <section class="step" id="stepAddParts" style="display:none">
-      <h2 data-i18n="step_add_heading">4. Add new parts (optional)</h2>
-      <p class="muted" data-i18n-html="add_parts_desc_html">
+      <h2 id="addPartsHeading" data-i18n="step_add_heading">5. Add new parts (optional)</h2>
+      <p class="muted" id="addPartsDesc" data-i18n-html="add_parts_desc_html">
         Ask Claude to write new spoken parts on top of the edited text — an intro, an outro,
         recent news about the person… Your existing text stays exactly as it is: Claude only
         writes the new parts to <code>workspace/additions.md</code>, each placed before or
@@ -187,7 +212,7 @@
     </section>
 
     <section class="step" id="stepBroll" style="display:none">
-      <h2 data-i18n="broll_heading">5. Video for new parts (optional)</h2>
+      <h2 data-i18n="broll_heading">6. Video for new parts (optional)</h2>
       <p class="muted" data-i18n="broll_desc">
         While a new part is spoken, the edited video pauses. Pick what's shown during that pause.
       </p>
@@ -205,7 +230,7 @@
 
     <section class="step" id="stepAudioMode" style="display:none">
       <div class="step-head">
-        <h2 data-i18n="step4_heading">6. Choose audio &amp; render</h2>
+        <h2 data-i18n="step4_heading">7. Choose audio &amp; render</h2>
         <button id="backToAddPartsBtn" class="link-btn" data-i18n="back_to_add_parts_button" style="display:none">&larr; Add new parts</button>
       </div>
       <div id="additionsAudioNote" class="muted" style="display:none"></div>
@@ -229,6 +254,14 @@
           Generates a voice-over for every chunk with the speed picked automatically to fill
           each chunk's window, then renders.
         </p>
+        <div class="row">
+          <label for="originalAudioSelect" data-i18n="original_audio_label">Speaker's real voice</label>
+          <select id="originalAudioSelect">
+            <option value="replace" data-i18n="original_audio_replace_option">Replace — voice everything with TTS</option>
+            <option value="under" data-i18n="original_audio_under_option">Keep quieter under the TTS (voice-over translation)</option>
+            <option value="keep" data-i18n="original_audio_keep_option">Keep as is — voice only the new parts</option>
+          </select>
+        </div>
         <div class="row">
           <select id="autoTtsVoiceSelect"></select>
           <button id="autoTtsBtn" data-i18n="auto_tts_button">Generate voice-over automatically &amp; render</button>

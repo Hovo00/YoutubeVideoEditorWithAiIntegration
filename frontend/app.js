@@ -7,8 +7,11 @@ const state = {
   outlineSections: [], // {level, title, start, end, body}
   chunks: [], // {text, start, end, slot_duration, title, kind}
   ttsVoices: [], // {name, label, provider}
-  additions: [], // {title, text, position, section, anchor} — step 4 new parts
+  additions: [], // {title, text, position, section, anchor} — step 5 new parts
   addPartsSkipped: false,
+  // Step 2, from /api/project/settings: {work_type, output_language,
+  // video_language, translating}. work_type is null until chosen.
+  settings: null,
 };
 
 function formatTime(seconds) {
@@ -80,8 +83,7 @@ function restoreSession() {
     preview.style.display = "block";
     document.getElementById("videoInfo").textContent =
       t("video_info_restored", { duration: formatTime(saved.duration) });
-    showStep("stepEditMode");
-    showEditMode(document.getElementById("editModeSelect").value);
+    enterProjectStep();
   } else {
     // Ingestion was still in progress when the page was last open — resume
     // polling rather than assuming a workspace video already exists.
@@ -175,13 +177,154 @@ function pollIngestStatus() {
       document.getElementById("videoInfo").textContent =
         t("video_info_duration", { duration: formatTime(data.duration) });
 
-      showStep("stepEditMode");
-      showEditMode(document.getElementById("editModeSelect").value);
+      enterProjectStep();
     } else if (data.status === "error") {
       clearInterval(state.pollTimer);
       statusEl.textContent = t("ingest_status_failed", { error: data.error });
     }
   }, 1500);
+}
+
+// --- Step 2: what to make (work type) and output language -----------------
+
+// Languages TTS voice names start with (Piper "ru_RU-…", Azure "ru-RU-…").
+const VOICE_LANGUAGE_CODES = { Russian: "ru", English: "en" };
+
+function isReview() {
+  return state.settings?.work_type === "review";
+}
+
+function outputLanguage() {
+  return state.settings?.output_language || state.settings?.video_language || "";
+}
+
+async function enterProjectStep() {
+  showStep("stepProject");
+  const response = await fetch(`/api/project/${state.projectId}/settings`);
+  if (!response.ok) {
+    updateProjectDescriptions();
+    return;
+  }
+  const settings = await response.json();
+  // Translating into the video's own language isn't a translation.
+  document.querySelector('#outputLanguageSelect option[value="Russian"]').disabled =
+    settings.video_language === "Russian";
+
+  if (settings.work_type) {
+    document.getElementById("workTypeSelect").value = settings.work_type;
+    document.getElementById("outputLanguageSelect").value = settings.output_language;
+    applySettings(settings);
+    showStep("stepEditMode");
+    showEditMode(document.getElementById("editModeSelect").value);
+  } else {
+    state.settings = { ...settings, work_type: null };
+    updateProjectDescriptions();
+  }
+}
+
+function updateProjectDescriptions() {
+  const review = document.getElementById("workTypeSelect").value === "review";
+  document.getElementById("workTypeDesc").textContent = t(review ? "work_type_review_desc" : "work_type_revoice_desc");
+
+  const target = document.getElementById("outputLanguageSelect").value;
+  const videoLanguage = state.settings?.video_language || "";
+  document.getElementById("outputLanguageDesc").textContent =
+    target && target !== videoLanguage
+      ? t("output_language_translate_desc", { lang: target })
+      : t("output_language_same_desc", { lang: videoLanguage || "?" });
+}
+
+document.getElementById("workTypeSelect").addEventListener("change", updateProjectDescriptions);
+document.getElementById("outputLanguageSelect").addEventListener("change", updateProjectDescriptions);
+
+document.getElementById("projectContinueBtn").addEventListener("click", async () => {
+  const statusEl = document.getElementById("projectStatus");
+  const formData = new FormData();
+  formData.append("project_id", state.projectId);
+  formData.append("work_type", document.getElementById("workTypeSelect").value);
+  formData.append("output_language", document.getElementById("outputLanguageSelect").value);
+
+  const response = await fetch("/api/project/settings", { method: "POST", body: formData });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    statusEl.textContent = t("project_status_failed", { detail: err.detail || response.statusText });
+    return;
+  }
+  applySettings(await response.json());
+  statusEl.textContent = t("project_status_saved");
+  showStep("stepEditMode");
+  showEditMode(document.getElementById("editModeSelect").value);
+  document.getElementById("stepEditMode").scrollIntoView({ behavior: "smooth" });
+});
+
+// Makes every later step follow the settings: what's available, the texts,
+// and sensible defaults. Safe to call again when the settings change.
+function setOptionAvailable(option, available, availableKey, unavailableKey) {
+  option.disabled = !available;
+  option.dataset.i18n = available ? availableKey : unavailableKey;
+}
+
+function applySettings(settings) {
+  state.settings = settings;
+  const review = settings.work_type === "review";
+  const translating = settings.translating;
+  const lang = outputLanguage();
+
+  // Edit mode: the transcript's own words can't be voiced in another language.
+  const editSelect = document.getElementById("editModeSelect");
+  setOptionAvailable(
+    editSelect.querySelector('option[value="manual"]'), !translating,
+    "edit_mode_manual_option", "edit_mode_manual_unavailable"
+  );
+  if (translating && editSelect.value === "manual") editSelect.value = "outline";
+
+  const note = document.getElementById("translationNote");
+  note.innerHTML = translating ? t("translation_note_html", { lang }) : "";
+  note.style.display = translating ? "block" : "none";
+
+  // Step 5: optional new parts, or the required review.
+  document.getElementById("addPartsHeading").dataset.i18n = review ? "step_review_heading" : "step_add_heading";
+  document.getElementById("addPartsDesc").dataset.i18nHtml = review ? "review_parts_desc_html" : "add_parts_desc_html";
+  document.getElementById("addPartsInstructionInput").dataset.i18nPlaceholder = review
+    ? "review_parts_instruction_placeholder"
+    : "add_parts_instruction_placeholder";
+  document.getElementById("loadAdditionsBtn").dataset.i18n = review ? "load_review_parts_button" : "load_additions_button";
+  document.getElementById("skipAddPartsBtn").style.display = review ? "none" : "";
+  if (review) state.addPartsSkipped = false;
+
+  // Audio: a plain cut has no voice for the review parts or a translation.
+  const audioSelect = document.getElementById("audioModeSelect");
+  setOptionAvailable(
+    audioSelect.querySelector('option[value="original"]'), !review && !translating,
+    "audio_mode_original_option", "audio_mode_original_unavailable"
+  );
+  if (audioSelect.selectedOptions[0]?.disabled) audioSelect.value = "auto-tts";
+
+  const originalSelect = document.getElementById("originalAudioSelect");
+  originalSelect.querySelector('option[value="keep"]').disabled = translating;
+  originalSelect.value = review ? (translating ? "under" : "keep") : "replace";
+
+  applyTranslations();
+  preferVoiceForLanguage();
+  if (document.getElementById("stepEditMode").style.display === "block") {
+    showEditMode(editSelect.value);
+  }
+  if (document.getElementById("stepAudioMode").style.display === "block") {
+    showAudioMode(audioSelect.value);
+  }
+}
+
+// Picks a TTS voice that speaks the output language (Azure first), unless
+// the chosen one already does.
+function preferVoiceForLanguage() {
+  const select = document.getElementById("autoTtsVoiceSelect");
+  const code = VOICE_LANGUAGE_CODES[outputLanguage()];
+  if (!code || select.options.length === 0) return;
+  const speaks = (option) => option.value.toLowerCase().startsWith(code);
+  if (select.selectedOptions[0] && speaks(select.selectedOptions[0])) return;
+  const options = Array.from(select.options).filter(speaks);
+  const best = options.find((o) => o.dataset.provider === "azure") || options[0];
+  if (best) select.value = best.value;
 }
 
 // --- Copy-paste prompts for Claude Desktop / claude terminal --------------
@@ -207,8 +350,12 @@ const MODE2_PROMPT =
   "Read AI_EDITING_INSTRUCTIONS.md in this project folder, then do Mode 2 " +
   "(build the corrected outline) exactly as it describes there.";
 
+// Every mode depends on the work type and output language from step 2.
+const SETTINGS_PROMPT_SUFFIX =
+  " Follow workspace/project.md (work type and output language) throughout.";
+
 document.getElementById("copyOutlineBtn").addEventListener("click", (e) => {
-  copyToClipboard(MODE2_PROMPT, e.currentTarget);
+  copyToClipboard(MODE2_PROMPT + SETTINGS_PROMPT_SUFFIX, e.currentTarget);
 });
 
 document.getElementById("copyAutonomousBtn").addEventListener("click", (e) => {
@@ -220,7 +367,7 @@ document.getElementById("copyAutonomousBtn").addEventListener("click", (e) => {
   const prompt =
     "Read AI_EDITING_INSTRUCTIONS.md in this project folder if you haven't " +
     "already this conversation, then do Mode 3 for this instruction: " +
-    instruction;
+    instruction.replace(/[.\s]+$/, "") + "." + SETTINGS_PROMPT_SUFFIX;
   copyToClipboard(prompt, e.currentTarget);
 });
 
@@ -595,7 +742,7 @@ document.getElementById("copyAddPartsBtn").addEventListener("click", async (e) =
   const button = e.currentTarget;
   const instruction = document.getElementById("addPartsInstructionInput").value.trim();
   if (!instruction) {
-    alert(t("alert_need_add_instruction"));
+    alert(t(isReview() ? "alert_need_review_instruction" : "alert_need_add_instruction"));
     return;
   }
 
@@ -612,12 +759,15 @@ document.getElementById("copyAddPartsBtn").addEventListener("click", async (e) =
     return;
   }
   const data = await response.json();
-  statusEl.textContent = t("additions_status_script_written", { count: data.sections });
+  statusEl.textContent = t(isReview() ? "review_status_script_written" : "additions_status_script_written", {
+    count: data.sections,
+  });
 
+  const mode = isReview() ? "Mode 5 (AI review parts)" : "Mode 4 (add new parts)";
   const prompt =
     "Read AI_EDITING_INSTRUCTIONS.md in this project folder if you haven't " +
-    "already this conversation, then do Mode 4 (add new parts) for this " +
-    "instruction: " + instruction;
+    `already this conversation, then do ${mode} for this ` +
+    "instruction: " + instruction.replace(/[.\s]+$/, "") + "." + SETTINGS_PROMPT_SUFFIX;
   copyToClipboard(prompt, button);
 });
 
@@ -759,6 +909,7 @@ function populateAutoTtsVoiceSelect() {
       option.dataset.provider = voice.provider;
       select.appendChild(option);
     }
+    preferVoiceForLanguage();
   }
 }
 
@@ -816,6 +967,7 @@ document.getElementById("autoTtsBtn").addEventListener("click", async () => {
     JSON.stringify(enabledCuts.map((c) => ({ start: c.start, end: c.end })))
   );
   formData.append("voice", voice);
+  formData.append("original_audio", document.getElementById("originalAudioSelect").value);
 
   document.getElementById("autoTtsReview").style.display = "none";
   const statusEl = document.getElementById("renderStatus");
@@ -865,6 +1017,7 @@ function autoTtsChunkMessage(chunk, maxGap) {
     vars.gap = (slot - duration).toFixed(1);
     return t(chunk.has_audio ? "auto_tts_flag_too_short_audio" : "auto_tts_flag_too_short_estimate", vars) + pausesNote(chunk);
   }
+  if (chunk.own_voice) return t("auto_tts_own_voice");
   if (chunk.status === "accepted") return t("auto_tts_chunk_accepted", vars) + pausesNote(chunk);
   return t("auto_tts_chunk_ok", vars) + pausesNote(chunk);
 }

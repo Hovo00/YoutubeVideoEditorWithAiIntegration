@@ -63,6 +63,9 @@ ADDITIONS_PATH = WORKSPACE_DIR / "additions.md"
 # Written by Claude with the outline (Mode 2): where a voice-over may pause
 # when it is much shorter than its video window (see backend/pauses.py).
 PAUSES_PATH = WORKSPACE_DIR / "pauses.md"
+# What the user wants to make and in which language (see /api/project/
+# settings) — Claude reads it before every mode.
+PROJECT_SETTINGS_PATH = WORKSPACE_DIR / "project.md"
 CHUNK_AUDIO_DIR = WORKSPACE_DIR / "chunk_audio"
 
 # Silence around an added part's voice-over (each side), so it doesn't butt
@@ -104,6 +107,7 @@ def _mirror_into_workspace(video_path: Path, vtt_text: str) -> None:
     SCRIPT_PATH.unlink(missing_ok=True)
     ADDITIONS_PATH.unlink(missing_ok=True)
     PAUSES_PATH.unlink(missing_ok=True)
+    PROJECT_SETTINGS_PATH.unlink(missing_ok=True)
     shutil.rmtree(CHUNK_AUDIO_DIR, ignore_errors=True)
 
 
@@ -203,6 +207,8 @@ async def ingest_youtube(youtube_url: str = Form(...), language: str = Form(...)
         "vtt_text": None,
         "source_url": youtube_url,
         "language": language,
+        "work_type": None,
+        "output_language": "",
     }
 
     thread = threading.Thread(
@@ -211,6 +217,84 @@ async def ingest_youtube(youtube_url: str = Form(...), language: str = Form(...)
     thread.start()
 
     return {"project_id": project_id}
+
+
+# --- Step 2: what to make, and in which language ----------------------------
+
+WORK_TYPES = {
+    "revoice": "Re-voice edit (cut the video, voice it with TTS)",
+    "review": "Review of a review (the reviewer's parts are quoted, AI review parts are added)",
+}
+# Languages the video can be translated into (only these have TTS voices).
+OUTPUT_LANGUAGES = ("Russian",)
+
+
+def _output_language(project: dict) -> str:
+    """The language the edited video is spoken in: the chosen output
+    language when it differs from the video's own, otherwise the video's."""
+    return project.get("output_language") or project.get("language", "")
+
+
+def _is_translating(project: dict) -> bool:
+    output = project.get("output_language")
+    return bool(output) and output != project.get("language")
+
+
+def _write_project_settings(project: dict) -> None:
+    video_language = project.get("language") or "unknown"
+    if _is_translating(project):
+        output_line = (
+            f"Output language: {project['output_language']} — TRANSLATE: everything you write "
+            f"(outline titles and text, new parts) is in {project['output_language']}"
+        )
+    else:
+        output_line = f"Output language: {video_language} (same as the video, no translation)"
+    PROJECT_SETTINGS_PATH.write_text(
+        "\n".join([
+            "# Project settings (written by the app — read only, do not edit)",
+            "",
+            f"Work type: {project['work_type']} — {WORK_TYPES[project['work_type']]}",
+            f"Video language: {video_language}",
+            output_line,
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+
+def _public_settings(project: dict) -> dict:
+    return {
+        "work_type": project.get("work_type"),
+        "output_language": project.get("output_language") or "",
+        "video_language": project.get("language", ""),
+        "translating": _is_translating(project),
+    }
+
+
+@app.post("/api/project/settings")
+async def project_settings(
+    project_id: str = Form(...), work_type: str = Form(...), output_language: str = Form("")
+):
+    """Step 2: the kind of video to make and the language it's spoken in.
+    Written to workspace/project.md so Claude follows it in every mode."""
+    project = _get_project(project_id)
+    if work_type not in WORK_TYPES:
+        raise HTTPException(400, f"Unknown work type: {work_type}")
+    if output_language and output_language not in OUTPUT_LANGUAGES:
+        raise HTTPException(400, f"Can't translate into {output_language} yet.")
+
+    # "Same as the video" is stored as "", also when the same language is picked.
+    if output_language == project.get("language"):
+        output_language = ""
+    project["work_type"] = work_type
+    project["output_language"] = output_language
+    _write_project_settings(project)
+    return _public_settings(project)
+
+
+@app.get("/api/project/{project_id}/settings")
+async def get_project_settings(project_id: str):
+    return _public_settings(_get_project(project_id))
 
 
 @app.get("/api/project/{project_id}/transcript")
@@ -483,7 +567,7 @@ async def write_script(project_id: str = Form(...), cuts_json: str = Form(...)):
     if not chunks:
         raise HTTPException(400, "Nothing is left after the cuts — there's no script to add to.")
 
-    SCRIPT_PATH.write_text(build_script(chunks, project.get("language", "")), encoding="utf-8")
+    SCRIPT_PATH.write_text(build_script(chunks, _output_language(project)), encoding="utf-8")
     return {"sections": len(chunks)}
 
 
@@ -574,7 +658,7 @@ def _estimate_part_seconds(project: dict, addition: dict) -> float:
     if cached and cached.get("text") == addition["text"]:
         return cached["seconds"]
 
-    prefix = _PIPER_PREFIX_BY_LANGUAGE.get(project.get("language", ""))
+    prefix = _PIPER_PREFIX_BY_LANGUAGE.get(_output_language(project))
     voices = [v["name"] for v in list_available_voices()] if prefix else []
     voice = next((v for v in voices if v.startswith(prefix)), None) if prefix else None
 
@@ -1083,6 +1167,15 @@ async def render_with_audio(
 # then continues the render.
 
 _ESTIMATE_PATH_NAME = "_estimate.wav"
+
+# What happens to the speaker's real voice under automatic TTS:
+#   replace — removed, every chunk is voiced (the re-voice default)
+#   under   — kept quieter under every voiced chunk (voice-over translation)
+#   keep    — kept as it is; only the new parts are voiced (a review that
+#             quotes the reviewer in his own language)
+ORIGINAL_AUDIO_MODES = ("replace", "under", "keep")
+# How much quieter the real voice is in "under".
+ORIGINAL_UNDER_DB = -16.0
 _RESOLVED_STATUSES = ("ok", "accepted")
 
 
@@ -1299,14 +1392,16 @@ def _auto_tts_render(project_id: str) -> None:
         project["phase"] = "rendering"
         project["phase_message"] = "Rendering video…"
         overlays, inserts, insert_clips = _auto_tts_layout(project, run)
+        original_audio = run.get("original_audio", "replace")
         render_video_with_audio(
             project["video_path"],
             str(run["output_path"]),
             run["keep_segments"],
-            False,
+            original_audio != "replace",
             overlays,
             inserts=inserts,
             insert_clips=insert_clips,
+            original_db=ORIGINAL_UNDER_DB if original_audio == "under" else 0.0,
         )
         project["status"] = "done"
         project["phase"] = "done"
@@ -1327,6 +1422,10 @@ def _run_auto_tts(project_id: str) -> None:
             project["phase"] = "generating_voiceover"
             project["phase_message"] = f"Generating voice-over… chunk {position + 1}/{total}"
             project["progress"] = position / total if total else 0.0
+            if run.get("original_audio") == "keep" and record["kind"] != "added":
+                # The speaker is heard in his own voice here: nothing to voice.
+                record.update(status="ok", own_voice=True)
+                continue
             _auto_tts_chunk(run, record)
 
         if any(r["status"] not in _RESOLVED_STATUSES for r in run["chunks"]):
@@ -1356,16 +1455,25 @@ def auto_tts(
     project_id: str = Form(...),
     cuts_json: str = Form(...),
     voice: str = Form(...),
+    original_audio: str = Form("replace"),
 ):
     """Audio Option 2: automatic TTS. Generates every chunk's voice-over
     with an automatically chosen speed, then renders. If some chunks can't
-    fit, it stops in "needs_review" (see /api/auto-tts/review)."""
+    fit, it stops in "needs_review" (see /api/auto-tts/review).
+
+    `original_audio` — see ORIGINAL_AUDIO_MODES."""
     project = _get_project(project_id)
 
     if not project.get("vtt_text"):
         raise HTTPException(400, "No transcript yet for this project.")
     if voice not in PIPER_KNOWN_VOICES and voice not in azure_tts.KNOWN_VOICES:
         raise HTTPException(400, f"Unknown voice: {voice}")
+    if original_audio not in ORIGINAL_AUDIO_MODES:
+        raise HTTPException(400, f"Unknown original audio option: {original_audio}")
+    if original_audio == "keep" and _is_translating(project):
+        raise HTTPException(
+            400, "The video is being translated, so the original voice can't replace the voice-over."
+        )
 
     try:
         raw_cuts = json.loads(cuts_json)
@@ -1388,6 +1496,7 @@ def auto_tts(
 
     project["auto_tts"] = {
         "voice": voice,
+        "original_audio": original_audio,
         "keep_segments": keep_segments,
         "output_path": OUTPUT_DIR / f"{project_id}_edited.mp4",
         "ratios": [],

@@ -17,6 +17,13 @@
 > - **Mode 4 — Add new parts**: after cutting, write brand-new spoken parts
 >   (an intro, an outro, recent news about the person...) to be inserted
 >   into the already-edited script, without touching any existing text.
+> - **Mode 5 — AI review parts**: for a "review of a review", write your
+>   own review around the reviewer's kept parts, introducing them as
+>   quotes and reacting to them.
+>
+> Before any mode, read `workspace/project.md`: it says what kind of video
+> is being made and in which language (see "Project settings and
+> translation" below).
 >
 > (The app also has a **Mode 1**, fully manual cue-by-cue cutting with no AI
 > involved at all — nothing in this file applies to that mode.)
@@ -75,6 +82,52 @@ each time:
   format" below, writing it to a file as well as replying in chat.
 - **"Mode 4"** means: do exactly what "Mode 4 — Add new parts" below
   describes, for the instruction given with it.
+- **"Mode 5"** means: do exactly what "Mode 5 — AI review parts" below
+  describes, for the instruction given with it.
+
+### Project settings and translation
+
+The app writes `workspace/project.md` when the user picks what to make.
+**Read it before every mode** (if it doesn't exist, assume a re-voice edit
+with no translation). It has three lines:
+
+- `Work type:` — `revoice` (cut the video and voice it, optionally with new
+  parts — Mode 4) or `review` (a review of someone else's review: the
+  reviewer's kept parts are played as quotes, and you write the review
+  around them — Mode 5).
+- `Video language:` — the language spoken in the video (and the
+  transcript).
+- `Output language:` — the language the edited video is spoken in. When
+  it says **TRANSLATE**, the video is voiced in that language with
+  text-to-speech, so everything you write that ends up spoken must be in
+  that language:
+
+  - **Mode 2 (outline):** titles **and body text** in the output language.
+    The body is a **faithful, complete translation** of that span's cue
+    text — every statement, name, number and nuance, in order — not a
+    summary. Correct Whisper's mistakes first (see "Correcting Whisper
+    errors"), then translate the corrected meaning; don't add
+    `{corrected: ...}` notes or `[unclear: ...]` markers to a translated
+    body — if something is truly unclear, translate your best reading and
+    mention it in your chat reply instead. Each body is spoken over its
+    own original video window, so keep it about as long to say as the
+    original: tighten wording rather than dropping content (Russian
+    usually runs 10–20% longer than English). Everything about timestamps
+    and boundaries stays exactly as described — they are still real cue
+    timestamps from `subtitles.vtt`. `pauses.md` quotes come from the
+    translated body you wrote. Every "Spelling for text-to-speech" rule
+    applies to the translation.
+  - **Mode 3 (autonomous):** the voice-over needs translated text, which
+    only an outline has. So first do Mode 2 in full (translated
+    `outline.md` and `pauses.md`), then do Mode 3 by **removing whole
+    outline sections only**: every `REMOVED` range is exactly one section's
+    (or several consecutive sections') start and end from your
+    `outline.md`. Never cut part of a section — its translated text would
+    then be spoken over video that no longer matches it. Hard rule 3's "no
+    translation" refers to the cues you output in `REMOVED`, which still
+    keep their original text.
+  - **Modes 4 and 5:** `script.md` is already in the output language (its
+    `Language:` line says so) — write the new parts in it.
 
 **If you don't have file access** (e.g. plain ChatGPT/Gemini web chat) —
 ignore the mode names; just use the TRANSCRIPT + INSTRUCTION template at
@@ -133,7 +186,10 @@ When asked to do "Mode 2":
    descriptive title and its start/end timestamps (real cue timestamps,
    never invented or rounded; per rule 3, the shared boundary between two
    neighbors is a single chosen value).
-   - **Write the title in the same language as the transcript itself** —
+   - **Write the title in the same language as the transcript itself**
+     (unless `workspace/project.md` says TRANSLATE — then titles and body
+     text are both in the output language, see "Project settings and
+     translation") —
      a Russian transcript gets Russian titles, an English one gets English
      titles, and so on. Don't default to English just because these are
      your own words; match whatever language the person in the video is
@@ -486,7 +542,8 @@ information" — you decide which whole cue blocks to remove to satisfy it,
 then produce the output described below. **If I haven't asked for a
 change, don't make one** — no instruction means no cuts, and nothing in the
 transcript gets touched or reworded regardless. No outline is involved in
-this mode.
+this mode — except when `workspace/project.md` says TRANSLATE (see
+"Project settings and translation").
 
 ### Hard rules — do not break these
 
@@ -718,6 +775,64 @@ outro, and a part about his latest fight"):
 If the user asks for changes afterwards ("make the intro shorter", "move
 the news after section 5"), rewrite the whole `workspace/additions.md` —
 the app always loads the latest version of the file.
+
+### Mode 5 — AI review parts
+
+Used when `workspace/project.md` says `Work type: review`. The video is
+someone else's review (of a fight, a product, a film...). The user has
+already cut it down to the parts worth quoting. You are now the host of
+the channel making a **review of that review**: you introduce the
+reviewer's parts, play them as quotes, and react to them — following the
+user's instruction (what to agree with, what to argue about, what to add).
+
+1. Read `workspace/project.md` and `workspace/script.md`. Each numbered
+   section of script.md is one **quote**: in the final video it plays as
+   the reviewer's own words (his own voice, or a voice-over translation of
+   it). script.md is **read only** — the same rules as Mode 4 apply: never
+   edit it, and never write `outline.md`, `pauses.md` or `cuts.md` in this
+   mode.
+2. Write your review parts to `workspace/additions.md` in **exactly the
+   Mode 4 format** — `## NEW before N | <title>` / `## NEW after N |
+   <title>` blocks, then `## SOURCES`, `## NOTES` and (if needed)
+   `## QUESTIONS`. Everything in Mode 4's steps 2–6 applies (placement,
+   output language, text-to-speech spelling, real facts with sources).
+3. **Structure of a review:**
+   - **Intro** (`before 1`): what this is — whose video you're reviewing
+     (name or channel, if known), what it's about, and your angle in a
+     sentence or two.
+   - **Lead-in before a quote** (`before N`): set it up — who is speaking
+     and on what topic — and hand over with a natural phrase in the output
+     language, e.g. «Давайте послушаем, что он об этом сказал.» / "Let's
+     hear what he said about it." Tease, don't retell: the viewer is about
+     to hear it, so don't summarise the quote right before it plays.
+   - **Reaction after a quote** (`after N`): your take — agree, disagree,
+     add context, correct a fact, compare with what really happened.
+     Don't repeat the quote back; build on it.
+   - **Outro** (`after <last section>`): your overall verdict on the
+     reviewer's video and a short sign-off.
+   - Not every section needs both a lead-in and a reaction, but every quote
+     must be introduced so the viewer always knows who is talking — at
+     least the first quote, after any of your own longer parts, and
+     whenever the topic changes. Several consecutive sections on the same
+     point can share one lead-in and one reaction.
+4. **Voice and honesty.** Speak as the channel host, in the first person,
+   in the output language. Opinions are welcome — say they're opinions.
+   Never put words in the reviewer's mouth: what he said is only what the
+   quotes contain. Refer to him by name if script.md, the instruction or
+   reliable sources give it; otherwise call him "the reviewer"/«автор» and
+   ask for the name under `## QUESTIONS`.
+5. **Length.** A lead-in is usually 5–20 seconds, a reaction 15–60
+   seconds, an intro or outro 15–40 seconds — unless the instruction asks
+   otherwise. Your parts pause the reviewer's video while they're spoken
+   (the user picks footage for them in the app), so keep them tight.
+6. **If a kept section shouldn't be quoted** (off-topic, a repeat, an ad),
+   don't work around it — say so under `## QUESTIONS`; the user removes it
+   in the app and asks you again.
+7. After writing the file, reply in chat with a short summary: each part's
+   place, title and estimated length, plus any QUESTIONS.
+
+If the user asks for changes afterwards, rewrite the whole
+`workspace/additions.md`, as in Mode 4.
 
 ---
 

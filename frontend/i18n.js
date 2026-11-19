@@ -54,7 +54,54 @@ const TRANSLATIONS = {
     video_info_restored: "Restored previous session — duration {duration}",
     video_info_duration: "Duration {duration}",
 
-    step2_heading: "2. Choose how to edit",
+    step_project_heading: "2. What do you want to make?",
+    work_type_label: "Work type",
+    work_type_revoice_option: "Re-voice edit — cut bloopers and voice the video with TTS",
+    work_type_review_option: "Review of a review — quote the reviewer and add AI review parts",
+    work_type_revoice_desc:
+      "Cut what you don't need, optionally add new parts (intro, outro…), and voice the result " +
+      "with text-to-speech or keep the original audio.",
+    work_type_review_desc:
+      "The video is someone else's review. You cut it down to the parts worth quoting, then " +
+      "Claude writes your own review around them (\"he also talked about X — let's listen…\"). " +
+      "The reviewer's parts play as quotes; the review parts are spoken by TTS, with footage " +
+      "you pick from this video or other links.",
+    output_language_label: "Output language",
+    output_language_same_option: "Same as the video",
+    output_language_russian_option: "Russian — Claude translates",
+    output_language_same_desc: "Everything stays in the video's language ({lang}).",
+    output_language_translate_desc:
+      "Claude writes the outline, the kept text and every new part in {lang}. The edited video " +
+      "is voiced in {lang} with TTS; manual cue-by-cue editing isn't available, because the " +
+      "text has to be translated.",
+    project_continue_button: "Continue",
+    project_status_saved: "Saved. Claude reads these settings from workspace/project.md.",
+    project_status_failed: "Could not save the settings: {detail}",
+    translation_note_html:
+      "Translating into <b>{lang}</b>: the AI outline is written in {lang}. With AI autonomous, " +
+      "Claude first writes a {lang} outline and then cuts whole sections of it.",
+    edit_mode_manual_unavailable: "Manual — not available when translating",
+    step_review_heading: "5. AI review (required)",
+    review_parts_desc_html:
+      "Describe your review — what you agree or disagree with, what to add. Claude reads the " +
+      "kept parts in <code>workspace/script.md</code> and writes your review parts to " +
+      "<code>workspace/additions.md</code>: it introduces the reviewer's parts as quotes " +
+      "(\"…let's listen to what he said\") and reacts after them. The reviewer's own words " +
+      "are never changed. In the next step you pick the footage shown while your review is spoken.",
+    review_parts_instruction_placeholder:
+      "e.g. agree on the striking analysis, argue about the prediction, add recent facts",
+    load_review_parts_button: "Load review parts",
+    review_status_script_written:
+      "Wrote workspace/script.md ({count} sections to quote). Paste the copied message into Claude, then click \"Load review parts\".",
+    alert_need_review_instruction: "Describe your review first (what to agree on, argue about, add).",
+    original_audio_label: "Speaker's real voice",
+    original_audio_replace_option: "Replace — voice everything with TTS",
+    original_audio_under_option: "Keep quieter under the TTS (voice-over translation)",
+    original_audio_keep_option: "Keep as is — voice only the new parts",
+    audio_mode_original_unavailable: "Original audio — not available for this project",
+    auto_tts_own_voice: "His own voice — not voiced.",
+
+    step2_heading: "3. Choose how to edit",
     edit_mode_manual_option: "Manual — delete parts yourself, no AI",
     edit_mode_outline_option: "AI outline — Claude structures + corrects, you pick sections to remove",
     edit_mode_autonomous_option: "AI autonomous — Claude decides what to cut from your instruction",
@@ -108,7 +155,7 @@ const TRANSLATIONS = {
     alert_parsing_failed: "Parsing failed: {detail}",
     alert_could_not_load_cuts: "Could not load workspace/cuts.md: {detail}",
 
-    step3_heading: "3. Review cuts",
+    step3_heading: "4. Review cuts",
     table_header_start: "Start",
     table_header_end: "End",
     table_header_duration: "Dur.",
@@ -119,7 +166,7 @@ const TRANSLATIONS = {
       "Removed: <b>{removed}</b> &nbsp;·&nbsp; " +
       'New duration (if all cuts kept enabled): <b id="newDuration">{newDuration}</b>',
 
-    step_add_heading: "4. Add new parts (optional)",
+    step_add_heading: "5. Add new parts (optional)",
     add_parts_desc_html:
       "Ask Claude to write new spoken parts on top of the edited text — an intro, an outro, " +
       "recent news about the person… Your existing text stays exactly as it is: Claude only " +
@@ -148,7 +195,7 @@ const TRANSLATIONS = {
       "{count} new part(s) included. They're spoken only with Automatic or Manual TTS; " +
       "\"Original audio\" renders without them.",
 
-    broll_heading: "5. Video for new parts (optional)",
+    broll_heading: "6. Video for new parts (optional)",
     broll_desc:
       "While a new part is spoken, the edited video pauses. Pick what's shown during that pause: " +
       "parts of the main video, or of any other YouTube video you add here. Only the picture is " +
@@ -188,7 +235,7 @@ const TRANSLATIONS = {
     broll_add_source_failed: "Could not add the video: {detail}",
     alert_need_broll_url: "Paste a YouTube link first.",
 
-    step4_heading: "6. Choose audio & render",
+    step4_heading: "7. Choose audio & render",
     audio_mode_original_option: "Original audio — just cut, keep the real audio",
     audio_mode_auto_option: "Automatic TTS — generate a voice-over for every chunk automatically",
     audio_mode_manual_option: "Manual TTS — edit/generate/upload voice-over per chunk yourself",
@@ -348,7 +395,54 @@ const TRANSLATIONS = {
     video_info_restored: "Предыдущая сессия восстановлена — длительность {duration}",
     video_info_duration: "Длительность {duration}",
 
-    step2_heading: "2. Выберите способ редактирования",
+    step_project_heading: "2. Что вы хотите сделать?",
+    work_type_label: "Тип работы",
+    work_type_revoice_option: "Переозвучка — вырезать лишнее и озвучить видео TTS",
+    work_type_review_option: "Обзор обзора — цитировать автора и добавить обзор от ИИ",
+    work_type_revoice_desc:
+      "Вырежьте ненужное, при желании добавьте новые части (вступление, концовку…) и озвучьте " +
+      "результат синтезом речи или оставьте оригинальный звук.",
+    work_type_review_desc:
+      "Видео — чужой обзор. Вы оставляете части, которые стоит процитировать, а Claude пишет ваш " +
+      "собственный обзор вокруг них («он также говорил о X — давайте послушаем…»). Части автора " +
+      "звучат как цитаты, части обзора озвучивает TTS, с видеорядом, который вы выбираете из " +
+      "этого видео или других ссылок.",
+    output_language_label: "Язык результата",
+    output_language_same_option: "Как в видео",
+    output_language_russian_option: "Русский — Claude переводит",
+    output_language_same_desc: "Всё остаётся на языке видео ({lang}).",
+    output_language_translate_desc:
+      "Claude пишет структуру, оставленный текст и все новые части на языке: {lang}. Видео " +
+      "озвучивается синтезом речи; ручное редактирование по репликам недоступно, потому что " +
+      "текст нужно перевести.",
+    project_continue_button: "Продолжить",
+    project_status_saved: "Сохранено. Claude читает эти настройки из workspace/project.md.",
+    project_status_failed: "Не удалось сохранить настройки: {detail}",
+    translation_note_html:
+      "Перевод на язык <b>{lang}</b>: структура ИИ пишется на этом языке. В автономном режиме " +
+      "Claude сначала пишет структуру на этом языке, а затем вырезает её разделы целиком.",
+    edit_mode_manual_unavailable: "Вручную — недоступно при переводе",
+    step_review_heading: "5. Обзор от ИИ (обязательно)",
+    review_parts_desc_html:
+      "Опишите ваш обзор — с чем вы согласны или не согласны, что добавить. Claude читает " +
+      "оставленные части в <code>workspace/script.md</code> и пишет части обзора в " +
+      "<code>workspace/additions.md</code>: представляет части автора как цитаты («…давайте " +
+      "послушаем, что он сказал») и реагирует после них. Слова автора никогда не меняются. " +
+      "На следующем шаге вы выберете видеоряд для частей обзора.",
+    review_parts_instruction_placeholder:
+      "например: согласиться с разбором ударки, поспорить с прогнозом, добавить свежие факты",
+    load_review_parts_button: "Загрузить части обзора",
+    review_status_script_written:
+      "Записан workspace/script.md (разделов для цитирования: {count}). Вставьте скопированное сообщение в Claude, затем нажмите «Загрузить части обзора».",
+    alert_need_review_instruction: "Сначала опишите ваш обзор (с чем согласиться, о чём поспорить, что добавить).",
+    original_audio_label: "Настоящий голос автора",
+    original_audio_replace_option: "Заменить — озвучить всё TTS",
+    original_audio_under_option: "Оставить тише под TTS (закадровый перевод)",
+    original_audio_keep_option: "Оставить как есть — озвучить только новые части",
+    audio_mode_original_unavailable: "Оригинальная дорожка — недоступно для этого проекта",
+    auto_tts_own_voice: "Его собственный голос — не озвучивается.",
+
+    step2_heading: "3. Выберите способ редактирования",
     edit_mode_manual_option: "Вручную — удаляйте части сами, без ИИ",
     edit_mode_outline_option: "ИИ-план — Claude структурирует + исправляет, вы выбираете что удалить",
     edit_mode_autonomous_option: "Автономный ИИ — Claude сам решает, что вырезать, по вашей инструкции",
@@ -402,7 +496,7 @@ const TRANSLATIONS = {
     alert_parsing_failed: "Не удалось разобрать: {detail}",
     alert_could_not_load_cuts: "Не удалось загрузить workspace/cuts.md: {detail}",
 
-    step3_heading: "3. Проверьте вырезки",
+    step3_heading: "4. Проверьте вырезки",
     table_header_start: "Начало",
     table_header_end: "Конец",
     table_header_duration: "Длит.",
@@ -413,7 +507,7 @@ const TRANSLATIONS = {
       "Удалено: <b>{removed}</b> &nbsp;·&nbsp; " +
       'Новая длительность (если все вырезки включены): <b id="newDuration">{newDuration}</b>',
 
-    step_add_heading: "4. Добавить новые части (необязательно)",
+    step_add_heading: "5. Добавить новые части (необязательно)",
     add_parts_desc_html:
       "Попросите Claude написать новые части поверх отредактированного текста — вступление, " +
       "заключение, последние новости о герое… Ваш текст остаётся без изменений: Claude пишет " +
@@ -442,7 +536,7 @@ const TRANSLATIONS = {
       "Включено новых частей: {count}. Они озвучиваются только в режимах «Автоматическая озвучка» " +
       "или «Ручная озвучка»; «Оригинальная дорожка» рендерится без них.",
 
-    broll_heading: "5. Видео для новых частей (необязательно)",
+    broll_heading: "6. Видео для новых частей (необязательно)",
     broll_desc:
       "Пока звучит новая часть, отредактированное видео стоит на паузе. Выберите, что показывать " +
       "в это время: фрагменты основного видео или любого другого видео с YouTube, добавленного " +
@@ -482,7 +576,7 @@ const TRANSLATIONS = {
     broll_add_source_failed: "Не удалось добавить видео: {detail}",
     alert_need_broll_url: "Сначала вставьте ссылку YouTube.",
 
-    step4_heading: "6. Выберите звук и рендер",
+    step4_heading: "7. Выберите звук и рендер",
     audio_mode_original_option: "Оригинальная дорожка — просто вырезать, сохранить реальный звук",
     audio_mode_auto_option: "Автоматическая озвучка — сгенерировать озвучку для каждого фрагмента автоматически",
     audio_mode_manual_option: "Ручная озвучка — редактируйте/генерируйте/загружайте озвучку для каждого фрагмента сами",

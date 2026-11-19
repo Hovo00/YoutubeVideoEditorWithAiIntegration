@@ -371,6 +371,7 @@ def render_video_with_audio(
     music_db: float = -5.0,
     inserts: list[tuple[float, float]] | None = None,
     insert_clips: list[list[tuple[str, float, float]]] | None = None,
+    original_db: float = 0.0,
 ) -> None:
     """Same video cutting as render_video, but with a custom audio mix:
     the original audio track (optional), a looped background music bed
@@ -387,6 +388,9 @@ def render_video_with_audio(
     `insert_clips` — per insert (parallel to `inserts`), the (video path,
     start, end) clips picked to show during it instead of the still frame
     (see _broll_overlays). Their audio is never used.
+
+    `original_db` — volume change of the original audio track (e.g. -16 to
+    keep the speaker audible under a translated voice-over).
     """
 
     if not keep_segments:
@@ -443,7 +447,11 @@ def render_video_with_audio(
             filter_parts.append(_audio_timeline_filter(timeline, "origaudio", aformat))
         else:
             filter_parts.append(_audio_cut_filter(keep_segments, "origaudio", aformat))
-        mix_labels.append("[origaudio]")
+        if original_db:
+            filter_parts.append(f"[origaudio]volume={original_db}dB[origquiet]")
+            mix_labels.append("[origquiet]")
+        else:
+            mix_labels.append("[origaudio]")
 
     if music_input_index is not None:
         filter_parts.append(

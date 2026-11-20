@@ -318,6 +318,14 @@ writing the file.
     (The app also fixes a short list of common words automatically right
     before voicing — see `backend/yo.py` and `tts_yo_words.txt` — but that
     is only a safety net, never a reason to skip this pass.)
+- **Russian: never use the word `самому`.** TTS always pronounces it
+  wrong. Don't write it yourself, and whenever it appears in text you
+  produce (including text translated or corrected from the transcript),
+  rephrase so the word disappears while keeping the meaning, e.g.
+  `к самому Джейку` → `лично к Джейку` / `к Джейку`, `самому себе` →
+  `себе`, `самому решать` → `решать лично`, `самому Джейку` → `лично
+  Джейку`. Do this silently, in body text and titles alike, and check
+  for it during the final pass above.
 - Make these and other pronunciation-relevant fixes **silently** (no
   `{corrected: ...}` markup). They are spelling, not content changes, and
   any markup in the body text could end up read aloud.

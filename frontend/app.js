@@ -250,10 +250,20 @@ document.getElementById("projectContinueBtn").addEventListener("click", async ()
     statusEl.textContent = t("project_status_failed", { detail: err.detail || response.statusText });
     return;
   }
-  applySettings(await response.json());
+  const settings = await response.json();
+  applySettings(settings);
   statusEl.textContent = t("project_status_saved");
   showStep("stepEditMode");
   showEditMode(document.getElementById("editModeSelect").value);
+  // An outline saved earlier for this video and language is back in the
+  // workspace — show it right away instead of asking Claude again.
+  if (settings.outline_restored) {
+    if (document.getElementById("editModeSelect").value === "manual") {
+      document.getElementById("editModeSelect").value = "outline";
+      showEditMode("outline");
+    }
+    loadOutline(t("outline_status_restored") + " ");
+  }
   document.getElementById("stepEditMode").scrollIntoView({ behavior: "smooth" });
 });
 
@@ -484,7 +494,7 @@ document.getElementById("cutSelectedCuesBtn").addEventListener("click", async ()
 
 // --- Edit mode 2 (AI outline): load workspace/outline.md ------------------
 
-document.getElementById("loadOutlineBtn").addEventListener("click", async () => {
+async function loadOutline(prefix = "") {
   const statusEl = document.getElementById("outlineStatus");
   const viewEl = document.getElementById("outlineView");
   statusEl.textContent = t("outline_status_loading");
@@ -500,9 +510,12 @@ document.getElementById("loadOutlineBtn").addEventListener("click", async () => 
 
   const data = await response.json();
   state.outlineSections = data.sections;
-  statusEl.textContent = data.sections.length
-    ? t("outline_status_sections", { count: data.sections.length })
-    : t("outline_status_empty");
+  statusEl.textContent =
+    prefix +
+    (data.sections.length
+      ? t("outline_status_sections", { count: data.sections.length })
+      : t("outline_status_empty")) +
+    (data.saved ? " " + t("outline_status_saved_note") : "");
 
   const preview = document.getElementById("preview");
 
@@ -541,6 +554,24 @@ document.getElementById("loadOutlineBtn").addEventListener("click", async () => 
     card.append(head, body);
     viewEl.appendChild(card);
   });
+}
+
+document.getElementById("loadOutlineBtn").addEventListener("click", () => loadOutline());
+
+// The app keeps every loaded outline per video and output language (see
+// backend/main.py, "Saved AI outlines"); deleting it makes Claude start over.
+document.getElementById("deleteOutlineBtn").addEventListener("click", async () => {
+  if (!confirm(t("confirm_delete_outline"))) return;
+  const response = await fetch("/api/outline/delete", { method: "POST" });
+  const statusEl = document.getElementById("outlineStatus");
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    statusEl.textContent = err.detail || response.statusText;
+    return;
+  }
+  state.outlineSections = [];
+  document.getElementById("outlineView").innerHTML = "";
+  statusEl.textContent = t("outline_status_deleted");
 });
 
 document.getElementById("cutSelectedSectionsBtn").addEventListener("click", async () => {

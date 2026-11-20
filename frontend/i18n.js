@@ -91,6 +91,12 @@ const TRANSLATIONS = {
     review_parts_instruction_placeholder:
       "e.g. agree on the striking analysis, argue about the prediction, add recent facts",
     load_review_parts_button: "Load review parts",
+    delete_outline_button: "Delete outline",
+    confirm_delete_outline:
+      "Delete the outline for this video and language? It's removed from the app's saved outlines too, so you'll need to ask Claude for a new one.",
+    outline_status_deleted: "Outline deleted. Copy the message for Claude to get a new one.",
+    outline_status_restored: "Restored the outline saved earlier for this video — no need to ask Claude again.",
+    outline_status_saved_note: "Saved for this video: it comes back next time you open it.",
     review_status_script_written:
       "Wrote workspace/script.md ({count} sections to quote). Paste the copied message into Claude, then click \"Load review parts\".",
     alert_need_review_instruction: "Describe your review first (what to agree on, argue about, add).",
@@ -432,6 +438,12 @@ const TRANSLATIONS = {
     review_parts_instruction_placeholder:
       "например: согласиться с разбором ударки, поспорить с прогнозом, добавить свежие факты",
     load_review_parts_button: "Загрузить части обзора",
+    delete_outline_button: "Удалить структуру",
+    confirm_delete_outline:
+      "Удалить структуру для этого видео и языка? Она удалится и из сохранённых в приложении, и нужно будет снова просить Claude.",
+    outline_status_deleted: "Структура удалена. Скопируйте сообщение для Claude, чтобы получить новую.",
+    outline_status_restored: "Восстановлена сохранённая ранее структура этого видео — просить Claude снова не нужно.",
+    outline_status_saved_note: "Сохранена для этого видео: в следующий раз она загрузится сама.",
     review_status_script_written:
       "Записан workspace/script.md (разделов для цитирования: {count}). Вставьте скопированное сообщение в Claude, затем нажмите «Загрузить части обзора».",
     alert_need_review_instruction: "Сначала опишите ваш обзор (с чем согласиться, о чём поспорить, что добавить).",

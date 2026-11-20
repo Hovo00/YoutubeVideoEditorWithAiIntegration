@@ -66,6 +66,10 @@ PAUSES_PATH = WORKSPACE_DIR / "pauses.md"
 # What the user wants to make and in which language (see /api/project/
 # settings) — Claude reads it before every mode.
 PROJECT_SETTINGS_PATH = WORKSPACE_DIR / "project.md"
+# Which video the workspace holds (video_id, video_language, model, and
+# output_language once chosen) — the key for saved outlines, see
+# _outline_cache_dir.
+SOURCE_PATH = WORKSPACE_DIR / "source.json"
 CHUNK_AUDIO_DIR = WORKSPACE_DIR / "chunk_audio"
 
 # Silence around an added part's voice-over (each side), so it doesn't butt
@@ -91,13 +95,78 @@ def _get_project(project_id: str) -> dict:
     return project
 
 
-def _mirror_into_workspace(video_path: Path, vtt_text: str) -> None:
+# --- Saved AI outlines -------------------------------------------------------
+# Claude's outline.md (and its pauses.md) is kept in the video's library
+# folder, next to the cached transcript it was built from:
+#   library/<video_id>/outlines/<video language>_<model>_to_<output language>/
+# so opening the same video again restores it instead of asking Claude for
+# a new one. It's saved whenever the outline is loaded in the app and before
+# the workspace switches to another video, and removed only when the user
+# deletes it in the app.
+
+
+def _read_source() -> dict:
+    try:
+        return json.loads(SOURCE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_source(**fields) -> None:
+    SOURCE_PATH.write_text(json.dumps({**_read_source(), **fields}), encoding="utf-8")
+
+
+def _outline_cache_dir(source: dict | None = None) -> Path | None:
+    """None until the video is a known YouTube video and the output
+    language is chosen (a translated outline is a different outline)."""
+    source = _read_source() if source is None else source
+    if not source.get("video_id") or not source.get("output_language"):
+        return None
+    key = f"{source['video_language']}_{source['model']}_to_{source['output_language']}"
+    return LIBRARY_DIR / source["video_id"] / "outlines" / key
+
+
+def _save_outline_to_cache() -> bool:
+    target = _outline_cache_dir()
+    if target is None or not OUTLINE_PATH.exists():
+        return False
+    if not parse_outline(OUTLINE_PATH.read_text(encoding="utf-8")):
+        return False  # don't keep a half-written or broken outline
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(OUTLINE_PATH, target / "outline.md")
+    if PAUSES_PATH.exists():
+        shutil.copyfile(PAUSES_PATH, target / "pauses.md")
+    else:
+        (target / "pauses.md").unlink(missing_ok=True)
+    return True
+
+
+def _restore_outline_from_cache() -> bool:
+    """Copies the saved outline into the workspace, unless the workspace
+    already has one (it may be newer, still being edited)."""
+    target = _outline_cache_dir()
+    if target is None or OUTLINE_PATH.exists() or not (target / "outline.md").exists():
+        return False
+    shutil.copyfile(target / "outline.md", OUTLINE_PATH)
+    if (target / "pauses.md").exists():
+        shutil.copyfile(target / "pauses.md", PAUSES_PATH)
+    return True
+
+
+def _has_saved_outline() -> bool:
+    target = _outline_cache_dir()
+    return bool(target and (target / "outline.md").exists())
+
+
+def _mirror_into_workspace(video_path: Path, vtt_text: str, video_id: str | None, language: str) -> None:
     """Mirrors the current project's video + transcript into the fixed
     workspace/ folder so Claude Desktop/Claude Code always has a stable
     path to work with. This is a new "current project" — drop any previous
     video file (could have a different extension) and any stale outline/cuts
-    output from whatever was there before."""
+    output from whatever was there before (saving the previous video's
+    outline first)."""
 
+    _save_outline_to_cache()
     for old_video in WORKSPACE_DIR.glob("video.*"):
         old_video.unlink()
     shutil.copyfile(video_path, WORKSPACE_DIR / f"video{video_path.suffix}")
@@ -108,7 +177,9 @@ def _mirror_into_workspace(video_path: Path, vtt_text: str) -> None:
     ADDITIONS_PATH.unlink(missing_ok=True)
     PAUSES_PATH.unlink(missing_ok=True)
     PROJECT_SETTINGS_PATH.unlink(missing_ok=True)
+    SOURCE_PATH.unlink(missing_ok=True)
     shutil.rmtree(CHUNK_AUDIO_DIR, ignore_errors=True)
+    _write_source(video_id=video_id, video_language=language, model=youtube_ingest.DEFAULT_WHISPER_MODEL)
 
 
 # --- YouTube ingestion (download + Whisper transcription) -----------------
@@ -167,7 +238,7 @@ def _run_ingest(project_id: str, youtube_url: str, language: str) -> None:
         project["vtt_text"] = vtt_text
         (project_dir / "subtitles.vtt").write_text(vtt_text, encoding="utf-8")
 
-        _mirror_into_workspace(video_path, vtt_text)
+        _mirror_into_workspace(video_path, vtt_text, video_id, language)
 
         project["status"] = "done"
         project["phase"] = "done"
@@ -268,6 +339,7 @@ def _public_settings(project: dict) -> dict:
         "output_language": project.get("output_language") or "",
         "video_language": project.get("language", ""),
         "translating": _is_translating(project),
+        "outline_saved": _has_saved_outline(),
     }
 
 
@@ -289,7 +361,18 @@ async def project_settings(
     project["work_type"] = work_type
     project["output_language"] = output_language
     _write_project_settings(project)
-    return _public_settings(project)
+
+    # A new output language needs its own outline: keep the current one
+    # under its old language, and bring back one saved for the new language.
+    new_language = _output_language(project)
+    previous_language = _read_source().get("output_language")
+    if previous_language and previous_language != new_language:
+        _save_outline_to_cache()
+        OUTLINE_PATH.unlink(missing_ok=True)
+        PAUSES_PATH.unlink(missing_ok=True)
+    _write_source(output_language=new_language)
+    restored = _restore_outline_from_cache()
+    return {**_public_settings(project), "outline_restored": restored}
 
 
 @app.get("/api/project/{project_id}/settings")
@@ -435,8 +518,21 @@ async def workspace_outline():
         "sections": [
             {"level": s.level, "title": s.title, "start": s.start, "end": s.end, "body": s.body}
             for s in sections
-        ]
+        ],
+        "saved": _save_outline_to_cache(),
     }
+
+
+@app.post("/api/outline/delete")
+async def delete_outline():
+    """"Delete outline" in the app: forget the saved outline for this video
+    and language, and the workspace copy, so Claude is asked for a new one."""
+    target = _outline_cache_dir()
+    if target is not None:
+        shutil.rmtree(target, ignore_errors=True)
+    OUTLINE_PATH.unlink(missing_ok=True)
+    PAUSES_PATH.unlink(missing_ok=True)
+    return {"deleted": True}
 
 
 @app.post("/api/outline-cuts")

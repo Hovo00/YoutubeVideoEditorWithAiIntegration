@@ -20,6 +20,8 @@ Edit a video by editing its transcript text, instead of a timeline.
      into titled paragraphs (correcting Whisper mis-transcriptions as it goes, and
      translating when asked, per [`AI_EDITING_INSTRUCTIONS.md`](AI_EDITING_INSTRUCTIONS.md))
      and writes `workspace/outline.md`. Load it, check sections to remove.
+     Every loaded outline is saved with the video (per output language), so opening the
+     same video again brings it back without asking Claude; "Delete outline" forgets it.
    - **AI autonomous** — describe the result you want (e.g. "trim this 40-minute video to
      about 15 minutes, keep only the important information"); copy the prompt into Claude,
      which decides what to cut and writes `workspace/cuts.md`. Load it.

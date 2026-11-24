@@ -49,6 +49,15 @@ Edit a video by editing its transcript text, instead of a timeline.
    switch tracks or delete them in the app.
 8. Render and download.
 
+**New video from a script** (the second choice on step 1) makes a video without a
+source video: describe the topic (Claude researches it), paste your resources, or paste
+your own script. Claude (Mode 6) writes the script split into scenes and picks real
+footage and photos for each scene into `workspace/script_video/shots.md` — never
+AI-generated media. The app shows the scenes (text, timings and captions are editable),
+downloads the footage, makes contact sheets so Claude can check the clip timings, then
+voices each scene (free Piper or Azure), adds optional music and renders 1920x1080, with a
+credits file listing every source.
+
 The app never talks to an AI itself — the AI steps are copy-paste into Claude Desktop/Code
 (or any other AI chat), and the app only parses the resulting `outline.md`/`cuts.md` files
 or pasted text, normalizes/merges the cuts, and uses FFmpeg to cut the video. See

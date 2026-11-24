@@ -168,7 +168,7 @@ function showPlan(plan) {
 }
 
 // Totals from the server: estimated length, video footage, and the target
-// (about a sixth of the video, e.g. 30 s of clips in 3 minutes).
+// range (a sixth to a quarter of the video, e.g. 30–45 s of clips in 3 min).
 function renderStats() {
   const stats = sv.plan.stats;
   const el = document.getElementById("svStats");
@@ -176,13 +176,14 @@ function renderStats() {
     el.textContent = "";
     return;
   }
-  const enough = stats.footage >= stats.target;
-  el.className = "sv-stats " + (enough ? "ok" : "low");
-  el.textContent = t(enough ? "sv_stats_ok" : "sv_stats_low", {
+  const level = stats.footage < stats.target ? "low" : stats.footage > stats.target_max ? "high" : "ok";
+  el.className = "sv-stats " + (level === "ok" ? "ok" : "low");
+  el.textContent = t(`sv_stats_${level}`, {
     total: formatSvTime(stats.total).replace(/\.\d$/, ""),
     footage: Math.round(stats.footage),
     clips: stats.clips,
     target: Math.round(stats.target),
+    target_max: Math.round(stats.target_max),
   });
 }
 

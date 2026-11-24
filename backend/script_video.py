@@ -86,11 +86,14 @@ VOICE_DELAY = 0.15      # silence before a scene's voice-over starts
 SCENE_TAIL = 0.5        # silence after it, before the next scene
 DEFAULT_IMAGE_SECONDS = 3.0
 # Video clips are short and lively: at most MAX_CLIP_SECONDS each, and the
-# footage should add up to about FOOTAGE_SHARE of the video (30 s in 3 min).
+# footage should add up to between FOOTAGE_SHARE and FOOTAGE_SHARE_MAX of
+# the video (30–45 s in 3 min) — photos carry the rest, so clips stay
+# special instead of the video cutting every few seconds.
 MAX_CLIP_SECONDS = 4.5
 MIN_CLIP_SECONDS = 1.0
 MIN_IMAGE_SECONDS = 1.5
 FOOTAGE_SHARE = 1 / 6
+FOOTAGE_SHARE_MAX = 1 / 4
 WORDS_PER_SECOND = 2.3
 # The "look" of every video clip (can be turned off in the app): a fixed
 # 10% zoom for the clip's whole length, a little more saturation and
@@ -606,12 +609,13 @@ def estimate_seconds(text: str) -> float:
 
 def footage_stats(plan: Plan) -> dict:
     """Rough totals for the app: how long the video will be, how much of it
-    is video footage, and how much footage FOOTAGE_SHARE asks for."""
+    is video footage, and the footage range FOOTAGE_SHARE..FOOTAGE_SHARE_MAX
+    asks for."""
     total = sum(estimate_seconds(scene.text) for scene in plan.scenes)
     footage = sum(s.length for scene in plan.scenes for s in scene.shots if s.kind == "video")
     clips = sum(1 for scene in plan.scenes for s in scene.shots if s.kind == "video")
     return {"total": round(total, 1), "footage": round(footage, 1), "clips": clips,
-            "target": round(total * FOOTAGE_SHARE, 1)}
+            "target": round(total * FOOTAGE_SHARE, 1), "target_max": round(total * FOOTAGE_SHARE_MAX, 1)}
 
 
 def synthesize(text: str, voice: str, base: Path) -> Path:

@@ -896,17 +896,21 @@ and renders the video (1920x1080). Everything happens in
    Match the picture to the words: the knockdown when the voice describes
    the knockdown, the person when they're named. Mix footage and photos;
    aim for a new shot every 2–6 seconds.
-   **Video footage is required, not optional.** Moving pictures are what
-   keep the video interesting, so:
+   **Video footage is required — but in moderation.** Clips are the
+   highlights; photos (which the app slowly zooms) carry the rest, so the
+   video doesn't cut every couple of seconds:
    - every clip is **2–4.5 seconds** (the app never plays more than 4.5 s
      of one clip), ideally ~3 s of one clean action;
-   - all clips together make up **at least a sixth of the video** — about
-     **30 seconds of clips in a 3-minute video** (e.g. ten 3-second
-     clips), more if good footage exists;
-   - put clips where the action is (the fight, the moment described), and
-     photos where a face, a place or a document is enough.
-   The app shows the totals ("video N s, target M s") and warns when
-   there's too little footage.
+   - all clips together make up **a sixth to a quarter of the video** —
+     about **30–45 seconds of clips in a 3-minute video** (e.g. ten to
+     fifteen 3-second clips), **not more**;
+   - most scenes get one or two clips; put them where the action is (the
+     fight, the launch, the moment described), and photos where a face, a
+     place or a document is enough;
+   - each photo stays on screen about **3–6 seconds**, so give a scene
+     enough photos to fill its voice-over around its clips.
+   The app shows the totals ("video N s, aim for M–K s") and warns when
+   there's too little or too much footage.
 6. **Video timings.** Each video shot needs the exact range to use. If you
    can run commands, check the footage yourself before writing (download
    with `yt-dlp`, look at frames with `ffmpeg`). Otherwise give your best

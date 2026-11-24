@@ -14,6 +14,7 @@ import tempfile
 import threading
 import wave
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -1102,7 +1103,101 @@ async def render(project_id: str = Form(...), cuts_json: str = Form(...)):
     return {"status": "started"}
 
 
-VoiceLayout = tuple[list[tuple[float, str]], list[tuple[float, float]], list[list[tuple[str, float, float]]]]
+# --- The author's own parts in a review: host voice + music ----------------
+#
+# Saved background tracks for the added parts live in media/music/ and are
+# reused across projects; selected.txt remembers the last one picked.
+MUSIC_DIR = MEDIA_DIR / "music"
+MUSIC_SELECTED_PATH = MUSIC_DIR / "selected.txt"
+MUSIC_EXTENSIONS = (".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".flac")
+HOST_MUSIC_DEFAULT_DB = -22.0
+
+
+def _music_tracks() -> list[str]:
+    if not MUSIC_DIR.exists():
+        return []
+    return sorted(
+        (p.name for p in MUSIC_DIR.iterdir() if p.is_file() and p.suffix.lower() in MUSIC_EXTENSIONS),
+        key=str.lower,
+    )
+
+
+def _music_track_path(name: str) -> Path:
+    path = MUSIC_DIR / Path(name).name
+    if not name or path.name != name or not path.is_file() or path.suffix.lower() not in MUSIC_EXTENSIONS:
+        raise HTTPException(404, f"No saved music track named {name!r}.")
+    return path
+
+
+def _selected_music() -> str:
+    if not MUSIC_SELECTED_PATH.exists():
+        return ""
+    name = MUSIC_SELECTED_PATH.read_text(encoding="utf-8").strip()
+    return name if name in _music_tracks() else ""
+
+
+def _select_music(name: str) -> None:
+    MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+    MUSIC_SELECTED_PATH.write_text(name, encoding="utf-8")
+
+
+def _host_settings(host_voice: bool, host_music: str, host_music_db: float) -> dict:
+    """How the added parts sound: `host_voice` applies render.HOST_VOICE_FILTER
+    to their voice-over, `host_music` is a saved track ("" for none) played
+    under each of them at `host_music_db`. The track choice is remembered."""
+    music_path = str(_music_track_path(host_music)) if host_music else None
+    _select_music(host_music)
+    return {"voice": host_voice, "music_path": music_path, "music_db": host_music_db}
+
+
+def _host_render_args(layout: "VoiceLayout", host: dict) -> dict:
+    return {
+        "host_overlays": layout.host_overlays,
+        "host_voice": bool(host.get("voice")),
+        "host_music": layout.host_spans,
+        "host_music_path": host.get("music_path"),
+        "host_music_db": host.get("music_db", HOST_MUSIC_DEFAULT_DB),
+    }
+
+
+@app.get("/api/music")
+def list_music():
+    return {"tracks": _music_tracks(), "selected": _selected_music(), "default_db": HOST_MUSIC_DEFAULT_DB}
+
+
+@app.post("/api/music")
+async def upload_music(music: UploadFile = File(...)):
+    """Saves a track for the added parts (kept for later projects) and
+    selects it."""
+    name = Path(music.filename or "").name.strip()
+    if not name or Path(name).suffix.lower() not in MUSIC_EXTENSIONS:
+        raise HTTPException(400, f"Pick an audio file ({', '.join(MUSIC_EXTENSIONS)}).")
+    MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+    with open(MUSIC_DIR / name, "wb") as f:
+        while data := await music.read(1024 * 1024):
+            f.write(data)
+    _select_music(name)
+    return list_music()
+
+
+@app.get("/api/music/file/{name}")
+def music_file(name: str):
+    return FileResponse(_music_track_path(name))
+
+
+@app.post("/api/music/delete")
+def delete_music(name: str = Form(...)):
+    _music_track_path(name).unlink()
+    return list_music()
+
+
+@dataclass
+class VoiceLayout:
+    overlays: list[tuple[float, str]]          # voice-over of the kept chunks
+    host_overlays: list[tuple[float, str]]     # voice-over of the added parts
+    inserts: list[tuple[float, float]]         # (anchor, duration) per added part
+    insert_clips: list[list[tuple[str, float, float]]]
+    host_spans: list[tuple[float, float]]      # (output start, duration) per added part
 
 
 def _voice_layout(
@@ -1111,9 +1206,10 @@ def _voice_layout(
     keep_segments: list[tuple[float, float]],
 ) -> VoiceLayout:
     """entries: (kind, start, audio_path, addition_index) per chunk, in chunk
-    order. Returns the voice overlays (output start, path), the inserts
-    (anchor, duration) and each insert's picked footage (see broll.py) for
-    render_video_with_audio. An added chunk only becomes an insert once it
+    order. Returns the voice overlays (output start, path) — the added
+    parts' ones separately — the inserts (anchor, duration), each insert's
+    picked footage (see broll.py) and where each insert sits in the output,
+    for render_video_with_audio. An added chunk only becomes an insert once it
     has audio — its voice-over decides how long the video pauses for it."""
     inserts = []
     insert_clips = []
@@ -1133,11 +1229,15 @@ def _voice_layout(
         for kind, start, path, _ in entries
         if kind != "added" and path is not None
     ]
-    overlays += [
+    host_overlays = [
         (insert_start + INSERT_PAD_SECONDS, str(path))
         for insert_start, path in zip(timeline.insert_starts, added_audio)
     ]
-    return overlays, inserts, insert_clips
+    host_spans = [
+        (insert_start, duration)
+        for insert_start, (_, duration) in zip(timeline.insert_starts, inserts)
+    ]
+    return VoiceLayout(overlays, host_overlays, inserts, insert_clips, host_spans)
 
 
 def _run_render_with_audio(
@@ -1145,11 +1245,10 @@ def _run_render_with_audio(
     keep_segments: list[tuple[float, float]],
     output_path: Path,
     keep_original_audio: bool,
-    voice_overlays: list[tuple[float, str]],
+    layout: VoiceLayout,
     music_path: str | None,
     music_db: float,
-    inserts: list[tuple[float, float]],
-    insert_clips: list[list[tuple[str, float, float]]],
+    host: dict,
 ) -> None:
     project = PROJECTS[project_id]
     try:
@@ -1158,11 +1257,12 @@ def _run_render_with_audio(
             str(output_path),
             keep_segments,
             keep_original_audio,
-            voice_overlays,
+            layout.overlays,
             music_path,
             music_db,
-            inserts,
-            insert_clips,
+            layout.inserts,
+            layout.insert_clips,
+            **_host_render_args(layout, host),
         )
         project["status"] = "done"
         project["output_path"] = str(output_path)
@@ -1178,13 +1278,19 @@ async def render_with_audio(
     keep_original_audio: bool = Form(...),
     music_db: float = Form(-5.0),
     music: UploadFile | None = File(None),
+    host_voice: bool = Form(False),
+    host_music: str = Form(""),
+    host_music_db: float = Form(HOST_MUSIC_DEFAULT_DB),
 ):
     """Like /api/render, but with a custom audio mix: optionally drop the
     original audio track entirely, optionally loop a background music file
     under the whole video, and overlay every already-generated chunk
     voice-over (workspace/chunk_audio/) at its mapped position in the final
-    timeline."""
+    timeline.
+
+    `host_voice` / `host_music` / `host_music_db` — see _host_settings."""
     project = _get_project(project_id)
+    host = _host_settings(host_voice, host_music, host_music_db)
 
     try:
         raw_cuts = json.loads(cuts_json)
@@ -1201,12 +1307,10 @@ async def render_with_audio(
     # Re-derive the same chunk list the user saw when generating/uploading
     # voice-over (same cuts -> same chunk indices), then map each chunk
     # that has audio to its position in the OUTPUT timeline.
-    voice_overlays: list[tuple[float, str]] = []
-    inserts: list[tuple[float, float]] = []
-    insert_clips: list[list[tuple[str, float, float]]] = []
+    layout = VoiceLayout([], [], [], [], [])
     if project.get("vtt_text") and CHUNK_AUDIO_DIR.exists():
         chunks, _, _, _ = _build_voice_chunks(project, normalized)
-        voice_overlays, inserts, insert_clips = _voice_layout(
+        layout = _voice_layout(
             project,
             [
                 (chunk.kind, chunk.start, _chunk_audio_path(index), chunk.addition_index)
@@ -1238,11 +1342,10 @@ async def render_with_audio(
             keep_segments,
             output_path,
             keep_original_audio,
-            voice_overlays,
+            layout,
             music_path,
             music_db,
-            inserts,
-            insert_clips,
+            host,
         ),
         daemon=True,
     )
@@ -1487,17 +1590,18 @@ def _auto_tts_render(project_id: str) -> None:
         project["status"] = "rendering"
         project["phase"] = "rendering"
         project["phase_message"] = "Rendering video…"
-        overlays, inserts, insert_clips = _auto_tts_layout(project, run)
+        layout = _auto_tts_layout(project, run)
         original_audio = run.get("original_audio", "replace")
         render_video_with_audio(
             project["video_path"],
             str(run["output_path"]),
             run["keep_segments"],
             original_audio != "replace",
-            overlays,
-            inserts=inserts,
-            insert_clips=insert_clips,
+            layout.overlays,
+            inserts=layout.inserts,
+            insert_clips=layout.insert_clips,
             original_db=ORIGINAL_UNDER_DB if original_audio == "under" else 0.0,
+            **_host_render_args(layout, run.get("host") or {}),
         )
         project["status"] = "done"
         project["phase"] = "done"
@@ -1552,13 +1656,18 @@ def auto_tts(
     cuts_json: str = Form(...),
     voice: str = Form(...),
     original_audio: str = Form("replace"),
+    host_voice: bool = Form(False),
+    host_music: str = Form(""),
+    host_music_db: float = Form(HOST_MUSIC_DEFAULT_DB),
 ):
     """Audio Option 2: automatic TTS. Generates every chunk's voice-over
     with an automatically chosen speed, then renders. If some chunks can't
     fit, it stops in "needs_review" (see /api/auto-tts/review).
 
-    `original_audio` — see ORIGINAL_AUDIO_MODES."""
+    `original_audio` — see ORIGINAL_AUDIO_MODES; `host_voice` /
+    `host_music` / `host_music_db` — see _host_settings."""
     project = _get_project(project_id)
+    host = _host_settings(host_voice, host_music, host_music_db)
 
     if not project.get("vtt_text"):
         raise HTTPException(400, "No transcript yet for this project.")
@@ -1593,6 +1702,7 @@ def auto_tts(
     project["auto_tts"] = {
         "voice": voice,
         "original_audio": original_audio,
+        "host": host,
         "keep_segments": keep_segments,
         "output_path": OUTPUT_DIR / f"{project_id}_edited.mp4",
         "ratios": [],
@@ -1691,8 +1801,17 @@ def auto_tts_accept(project_id: str = Form(...), chunk_index: int = Form(...), t
 
 
 @app.post("/api/auto-tts/continue")
-def auto_tts_continue(project_id: str = Form(...)):
+def auto_tts_continue(
+    project_id: str = Form(...),
+    host_voice: bool | None = Form(None),
+    host_music: str = Form(""),
+    host_music_db: float = Form(HOST_MUSIC_DEFAULT_DB),
+):
+    """Renders after the review. The "your parts" settings may have been
+    changed meanwhile, so they're taken again when sent."""
     project, run = _get_auto_tts_run(project_id)
+    if host_voice is not None:
+        run["host"] = _host_settings(host_voice, host_music, host_music_db)
     unresolved = [r["index"] + 1 for r in run["chunks"] if r["status"] not in _RESOLVED_STATUSES]
     if unresolved:
         raise HTTPException(400, f"Chunks still need attention: {', '.join(map(str, unresolved))}")

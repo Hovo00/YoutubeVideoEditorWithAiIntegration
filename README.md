@@ -41,6 +41,12 @@ Edit a video by editing its transcript text, instead of a timeline.
      Piper voice, so chunks that can't fit are listed for you to edit or accept before
      rendering, and never sent to Azure.
    - **Manual TTS** — review/edit/generate or upload a voice-over per chunk yourself.
+
+   In a review, **Your parts** sets how your own commentary sounds so it stands out
+   from the quotes: +2 dB louder, slightly deeper and a warmer "studio" sound, plus an
+   optional music track under every part (the same snippet each time, fading in and
+   out). Tracks you add are saved in `media/music/` for later projects; you can
+   switch tracks or delete them in the app.
 8. Render and download.
 
 The app never talks to an AI itself — the AI steps are copy-paste into Claude Desktop/Code

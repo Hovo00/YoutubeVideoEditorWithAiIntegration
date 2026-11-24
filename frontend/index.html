@@ -243,6 +243,26 @@
         </select>
       </div>
 
+      <div id="hostPartsBlock" class="host-parts" style="display:none">
+        <h3 data-i18n="host_parts_heading">Your parts (the AI review parts)</h3>
+        <p class="muted" data-i18n="host_parts_desc">Make your own commentary easy to tell apart from the reviewer's quotes.</p>
+        <div class="row">
+          <label><input type="checkbox" id="hostVoiceCheck" checked /> <span data-i18n="host_voice_label">Different voice sound: +2 dB louder, slightly deeper, warmer "studio" sound</span></label>
+        </div>
+        <div class="row">
+          <label for="hostMusicSelect" data-i18n="host_music_label">Music under your parts</label>
+          <select id="hostMusicSelect"></select>
+          <button type="button" id="hostMusicAddBtn" class="link-btn" data-i18n="host_music_add_button">Add a track…</button>
+          <button type="button" id="hostMusicDeleteBtn" class="link-btn" data-i18n="host_music_delete_button">Delete this track</button>
+          <input type="file" id="hostMusicFileInput" accept=".mp3,.m4a,.aac,.wav,.ogg,.opus,.flac,audio/*" style="display:none" />
+        </div>
+        <div class="row" id="hostMusicVolumeRow">
+          <label><span data-i18n="volume_label">Volume:</span> <input type="number" id="hostMusicDbInput" value="-22" step="1" style="width:4em" /> <span data-i18n="db_label">dB</span></label>
+          <audio id="hostMusicPreview" controls preload="none"></audio>
+        </div>
+        <p class="muted" data-i18n="host_music_note">The track starts from its beginning under every part (the same snippet each time) and fades in and out. Saved tracks stay for your next projects. Use music you have the rights to (e.g. the YouTube Audio Library).</p>
+      </div>
+
       <div id="audioModeOriginal" style="display:none">
         <p class="muted" data-i18n="audio_original_desc">Keeps the original audio untouched, no voice-over, no music.</p>
         <div class="row">

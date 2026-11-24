@@ -95,6 +95,17 @@ const TRANSLATIONS = {
     confirm_delete_outline:
       "Delete the outline for this video and language? It's removed from the app's saved outlines too, so you'll need to ask Claude for a new one.",
     outline_status_deleted: "Outline deleted. Copy the message for Claude to get a new one.",
+    host_parts_heading: "Your parts (the AI review parts)",
+    host_parts_desc: "Make your own commentary easy to tell apart from the reviewer's quotes.",
+    host_voice_label: "Different voice sound: +2 dB louder, slightly deeper, warmer \"studio\" sound",
+    host_music_label: "Music under your parts",
+    host_music_none: "No music",
+    host_music_add_button: "Add a track…",
+    host_music_delete_button: "Delete this track",
+    host_music_note:
+      "The track starts from its beginning under every part (the same snippet each time) and fades in and out. Saved tracks stay for your next projects. Use music you have the rights to (e.g. the YouTube Audio Library).",
+    host_music_upload_failed: "Couldn't save the track: {detail}",
+    confirm_delete_music: "Delete the track \"{name}\"? It will be removed from this computer.",
     outline_status_restored: "Restored the outline saved earlier for this video — no need to ask Claude again.",
     outline_status_saved_note: "Saved for this video: it comes back next time you open it.",
     review_status_script_written:
@@ -442,6 +453,17 @@ const TRANSLATIONS = {
     confirm_delete_outline:
       "Удалить структуру для этого видео и языка? Она удалится и из сохранённых в приложении, и нужно будет снова просить Claude.",
     outline_status_deleted: "Структура удалена. Скопируйте сообщение для Claude, чтобы получить новую.",
+    host_parts_heading: "Ваши части (части обзора от ИИ)",
+    host_parts_desc: "Чтобы ваши комментарии было легко отличить от цитат автора обзора.",
+    host_voice_label: "Другое звучание голоса: на 2 дБ громче, чуть ниже, тёплый «студийный» звук",
+    host_music_label: "Музыка под вашими частями",
+    host_music_none: "Без музыки",
+    host_music_add_button: "Добавить трек…",
+    host_music_delete_button: "Удалить этот трек",
+    host_music_note:
+      "Под каждой частью трек начинается с начала (каждый раз один и тот же фрагмент), с плавным появлением и затуханием. Сохранённые треки останутся для следующих проектов. Используйте музыку, на которую у вас есть права (например, из Фонотеки YouTube).",
+    host_music_upload_failed: "Не удалось сохранить трек: {detail}",
+    confirm_delete_music: "Удалить трек «{name}»? Он будет удалён с этого компьютера.",
     outline_status_restored: "Восстановлена сохранённая ранее структура этого видео — просить Claude снова не нужно.",
     outline_status_saved_note: "Сохранена для этого видео: в следующий раз она загрузится сама.",
     review_status_script_written:

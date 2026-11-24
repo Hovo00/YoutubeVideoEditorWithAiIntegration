@@ -911,7 +911,87 @@ function showAudioMode(mode) {
   if (mode === "auto-tts") {
     ensureTtsVoicesLoaded().then(populateAutoTtsVoiceSelect);
   }
+  const showHost = isReview() && mode !== "original";
+  document.getElementById("hostPartsBlock").style.display = showHost ? "block" : "none";
+  if (showHost && !state.musicLoaded) loadMusicTracks();
 }
+
+// --- "Your parts" in a review: host voice + music under the added parts ---
+
+function renderMusicTracks(data) {
+  state.musicLoaded = true;
+  const select = document.getElementById("hostMusicSelect");
+  select.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.dataset.i18n = "host_music_none";
+  none.textContent = t("host_music_none");
+  select.appendChild(none);
+  for (const name of data.tracks) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  }
+  select.value = data.selected || "";
+  updateMusicControls();
+}
+
+function updateMusicControls() {
+  const name = document.getElementById("hostMusicSelect").value;
+  document.getElementById("hostMusicDeleteBtn").style.display = name ? "" : "none";
+  document.getElementById("hostMusicVolumeRow").style.display = name ? "" : "none";
+  const preview = document.getElementById("hostMusicPreview");
+  const src = name ? `/api/music/file/${encodeURIComponent(name)}` : "";
+  if (preview.getAttribute("src") !== src) {
+    preview.pause();
+    if (src) preview.setAttribute("src", src);
+    else preview.removeAttribute("src");
+  }
+}
+
+async function loadMusicTracks() {
+  const response = await fetch("/api/music");
+  if (response.ok) renderMusicTracks(await response.json());
+}
+
+// Adds the "your parts" settings to a render request (review only).
+function appendHostSettings(formData) {
+  if (!isReview()) return;
+  formData.append("host_voice", document.getElementById("hostVoiceCheck").checked ? "true" : "false");
+  formData.append("host_music", document.getElementById("hostMusicSelect").value);
+  formData.append("host_music_db", document.getElementById("hostMusicDbInput").value || "-22");
+}
+
+document.getElementById("hostMusicSelect").addEventListener("change", updateMusicControls);
+
+document.getElementById("hostMusicAddBtn").addEventListener("click", () => {
+  document.getElementById("hostMusicFileInput").click();
+});
+
+document.getElementById("hostMusicFileInput").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const formData = new FormData();
+  formData.append("music", file);
+  const response = await fetch("/api/music", { method: "POST", body: formData });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    alert(t("host_music_upload_failed", { detail: err.detail || response.statusText }));
+    return;
+  }
+  renderMusicTracks(await response.json());
+});
+
+document.getElementById("hostMusicDeleteBtn").addEventListener("click", async () => {
+  const name = document.getElementById("hostMusicSelect").value;
+  if (!name || !confirm(t("confirm_delete_music", { name }))) return;
+  const formData = new FormData();
+  formData.append("name", name);
+  const response = await fetch("/api/music/delete", { method: "POST", body: formData });
+  if (response.ok) renderMusicTracks(await response.json());
+});
 
 document.getElementById("audioModeSelect").addEventListener("change", (e) => {
   showAudioMode(e.target.value);
@@ -999,6 +1079,7 @@ document.getElementById("autoTtsBtn").addEventListener("click", async () => {
   );
   formData.append("voice", voice);
   formData.append("original_audio", document.getElementById("originalAudioSelect").value);
+  appendHostSettings(formData);
 
   document.getElementById("autoTtsReview").style.display = "none";
   const statusEl = document.getElementById("renderStatus");
@@ -1182,6 +1263,7 @@ function renderAutoTtsReviewCard(chunk, maxGap) {
 document.getElementById("autoTtsContinueBtn").addEventListener("click", async () => {
   const formData = new FormData();
   formData.append("project_id", state.projectId);
+  appendHostSettings(formData);
 
   const statusEl = document.getElementById("renderStatus");
   const response = await fetch("/api/auto-tts/continue", { method: "POST", body: formData });
@@ -1502,6 +1584,7 @@ document.getElementById("renderWithAudioBtn").addEventListener("click", async ()
     document.getElementById("cutOriginalAudioCheck").checked ? "false" : "true"
   );
   formData.append("music_db", document.getElementById("musicDbInput").value || "-5");
+  appendHostSettings(formData);
 
   if (document.getElementById("addMusicCheck").checked) {
     const musicFile = document.getElementById("musicInput").files[0];

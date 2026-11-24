@@ -361,6 +361,30 @@ def _source_input_args(input_path: str, keep_segments: list[tuple[float, float]]
     return ["-t", f"{last_end + 0.5:.3f}", "-i", input_path]
 
 
+# The author's own parts in a review ("host voice"): a touch deeper (pitch
+# x0.97 with the length kept by atempo), warmer and closer (low-end warmth,
+# presence boost, light compression) and +2 dB louder than the rest, so
+# they're easy to tell apart from the voiced quotes. Works the same for
+# every TTS voice, since it's applied at render time.
+HOST_PITCH = 0.97
+HOST_VOICE_DB = 2.0
+# The EQ + compression on their own leave the voice about 2.7 dB quieter
+# (measured as integrated loudness on Azure and Piper voice-overs), so
+# that's added back for a net +HOST_VOICE_DB.
+_HOST_COMPRESSION_LOSS_DB = 2.7
+HOST_VOICE_FILTER = ",".join([
+    f"asetrate={_MIX_SAMPLE_RATE}*{HOST_PITCH}",
+    f"aresample={_MIX_SAMPLE_RATE}",
+    f"atempo={1 / HOST_PITCH:.5f}",
+    "equalizer=f=160:t=q:w=0.9:g=2.5",
+    "equalizer=f=3500:t=q:w=1.2:g=2.5",
+    "acompressor=threshold=-20dB:ratio=3:attack=10:release=200",
+    f"volume={HOST_VOICE_DB + _HOST_COMPRESSION_LOSS_DB}dB",
+])
+HOST_MUSIC_FADE_IN = 0.5
+HOST_MUSIC_FADE_OUT = 1.0
+
+
 def render_video_with_audio(
     input_path: str,
     output_path: str,
@@ -372,6 +396,11 @@ def render_video_with_audio(
     inserts: list[tuple[float, float]] | None = None,
     insert_clips: list[list[tuple[str, float, float]]] | None = None,
     original_db: float = 0.0,
+    host_overlays: list[tuple[float, str]] | None = None,
+    host_voice: bool = False,
+    host_music: list[tuple[float, float]] | None = None,
+    host_music_path: str | None = None,
+    host_music_db: float = -22.0,
 ) -> None:
     """Same video cutting as render_video, but with a custom audio mix:
     the original audio track (optional), a looped background music bed
@@ -391,6 +420,14 @@ def render_video_with_audio(
 
     `original_db` — volume change of the original audio track (e.g. -16 to
     keep the speaker audible under a translated voice-over).
+
+    `host_overlays` — voice-overs of the added parts (output start, path),
+    mixed like voice_overlays; with `host_voice` they get HOST_VOICE_FILTER
+    so the author's own parts sound noticeably different from the rest.
+
+    `host_music` — (output start, duration) spans that get `host_music_path`
+    under them at `host_music_db`: the track starts from its beginning in
+    every span (the same snippet each time), fading in and out.
     """
 
     if not keep_segments:
@@ -413,6 +450,20 @@ def render_video_with_audio(
     for _, path in voice_overlays:
         inputs += ["-i", path]
         voice_input_indices.append(next_input_index)
+        next_input_index += 1
+
+    host_overlays = host_overlays or []
+    host_input_indices = []
+    for _, path in host_overlays:
+        inputs += ["-i", path]
+        host_input_indices.append(next_input_index)
+        next_input_index += 1
+
+    host_music_spans = [(start, length) for start, length in (host_music or []) if length > 0] if host_music_path else []
+    host_music_indices = []
+    for _, length in host_music_spans:
+        inputs += ["-stream_loop", "-1", "-t", f"{length:.3f}", "-i", host_music_path]
+        host_music_indices.append(next_input_index)
         next_input_index += 1
 
     filter_parts = []
@@ -464,6 +515,25 @@ def render_video_with_audio(
         delay_ms = max(0, round(start_in_output * 1000))
         label = f"voice{input_index}"
         filter_parts.append(f"[{input_index}:a]{aformat},adelay={delay_ms}|{delay_ms}[{label}]")
+        mix_labels.append(f"[{label}]")
+
+    for (start_in_output, _path), input_index in zip(host_overlays, host_input_indices):
+        delay_ms = max(0, round(start_in_output * 1000))
+        label = f"host{input_index}"
+        style = f"{HOST_VOICE_FILTER}," if host_voice else ""
+        filter_parts.append(f"[{input_index}:a]{aformat},{style}adelay={delay_ms}|{delay_ms}[{label}]")
+        mix_labels.append(f"[{label}]")
+
+    for (start_in_output, length), input_index in zip(host_music_spans, host_music_indices):
+        delay_ms = max(0, round(start_in_output * 1000))
+        fade_in = min(HOST_MUSIC_FADE_IN, length / 3)
+        fade_out = min(HOST_MUSIC_FADE_OUT, length / 3)
+        label = f"hostmusic{input_index}"
+        filter_parts.append(
+            f"[{input_index}:a]{aformat},asetpts=PTS-STARTPTS,"
+            f"afade=t=in:st=0:d={fade_in:.3f},afade=t=out:st={length - fade_out:.3f}:d={fade_out:.3f},"
+            f"volume={host_music_db}dB,adelay={delay_ms}|{delay_ms}[{label}]"
+        )
         mix_labels.append(f"[{label}]")
 
     filter_parts.append(

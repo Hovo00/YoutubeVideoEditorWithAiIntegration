@@ -764,3 +764,22 @@ td.time {
   font-size: 0.8em;
   color: #777;
 }
+
+/* "Your parts" settings in a review: host voice + music under the added parts. */
+.host-parts {
+  border: 1px solid #333;
+  border-left: 3px solid #f59e0b;
+  border-radius: 8px;
+  padding: 4px 14px 8px;
+  margin: 12px 0;
+}
+
+.host-parts h3 {
+  margin: 10px 0 4px;
+  font-size: 1em;
+}
+
+.host-parts audio {
+  height: 32px;
+  max-width: 100%;
+}

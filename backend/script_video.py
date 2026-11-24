@@ -30,8 +30,8 @@ shots.md format (see Mode 6 for the full rules Claude follows):
 Shot options: `crop` (cut off the bottom of the frame — a lower-third
 scoreboard or someone's logo), `caption: …` (lower-third text), `title: …`
 (big label in the top-left for the first seconds), `zoom: in|out` (images).
-Video clips play at most MAX_CLIP_SECONDS (4.5 s) each, with a slow zoom
-and a light colour look; photos take up whatever time the scene's
+Video clips play at most MAX_CLIP_SECONDS (4.5 s) each, zoomed in 10%
+with a light colour look; photos take up whatever time the scene's
 voice-over needs beyond its clips (see fit_lengths).
 """
 
@@ -91,10 +91,10 @@ MIN_CLIP_SECONDS = 1.0
 MIN_IMAGE_SECONDS = 1.5
 FOOTAGE_SHARE = 1 / 6
 WORDS_PER_SECOND = 2.3
-# The "look" of every video clip (can be turned off in the app): a slow
-# zoom (alternating in/out), a little more saturation and contrast, a
-# touch of warmth, light sharpening and a soft vignette.
-CLIP_ZOOM = 0.06
+# The "look" of every video clip (can be turned off in the app): a fixed
+# 10% zoom for the clip's whole length, a little more saturation and
+# contrast, a touch of warmth, light sharpening and a soft vignette.
+CLIP_ZOOM = 1.10
 CLIP_LOOK = ",".join([
     "eq=saturation=1.15:contrast=1.06:brightness=0.01",
     "colorbalance=rs=0.03:gs=0.01:bs=-0.03",
@@ -500,16 +500,18 @@ def _overlays(shot: Shot, font: str, length: float) -> list[str]:
 
 
 def _render_video_shot(
-    shot: Shot, source: Path, length: float, out: Path, font: str, effects: bool = True, zoom_in: bool = True,
+    shot: Shot, source: Path, length: float, out: Path, font: str, effects: bool = True,
 ) -> None:
     """`length` seconds of the source from the shot's start (it plays on
     past the range's end if the scene needs it; the source's own end holds
-    its last frame). With `effects`, CLIP_LOOK and a slow zoom are applied."""
+    its last frame). With `effects`, the CLIP_ZOOM zoom and CLIP_LOOK."""
     duration = get_duration(str(source))
     start = min(max(0.0, shot.start or 0.0), max(0.0, duration - 0.5))
     available = max(0.1, min(duration - start, length))
-    frames = max(1, round(length * FPS))
     vf = [CROP_FILTER] if shot.crop else []
+    if effects:
+        # Static zoom: the centre 1/CLIP_ZOOM of the frame, scaled back up.
+        vf.append(f"crop=iw/{CLIP_ZOOM}:ih/{CLIP_ZOOM}:(iw-ow)/2:(ih-oh)/2")
     vf += [
         f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease",
         f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2:black",
@@ -518,14 +520,7 @@ def _render_video_shot(
         f"trim=duration={length:.3f}",
     ]
     if effects:
-        zoom = f"1+{CLIP_ZOOM}*on/{frames}" if zoom_in else f"1+{CLIP_ZOOM}-{CLIP_ZOOM}*on/{frames}"
-        # Zooming on a 2x frame keeps the slow movement smooth (no jitter).
-        vf += [
-            f"scale={WIDTH * 2}:{HEIGHT * 2}",
-            f"zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={WIDTH}x{HEIGHT}:fps={FPS}",
-            "setsar=1",
-            CLIP_LOOK,
-        ]
+        vf.append(CLIP_LOOK)
     vf += _overlays(shot, font, length)
     _ffmpeg(["-ss", f"{start:.3f}", "-t", f"{available:.3f}", "-i", str(source), "-an",
              "-vf", ",".join(vf), "-frames:v", str(round(length * FPS)), *ENCODE, str(out)])
@@ -726,7 +721,6 @@ def _write_thumbnails(plan: Plan) -> None:
 
 def _render(plan: Plan, voice: str, music: str, music_db: float, effects: bool = True) -> None:
     font = _font()
-    clip_number = 0  # alternates the clips' zoom in / out
     for folder in (VOICE_DIR, SEGMENTS_DIR):
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True)
@@ -749,8 +743,7 @@ def _render(plan: Plan, voice: str, music: str, music_db: float, effects: bool =
             out = SEGMENTS_DIR / f"s{index:03d}_{number:02d}.mp4"
             source = media_path(shot)
             if shot.kind == "video":
-                clip_number += 1
-                _render_video_shot(shot, source, shot_length, out, font, effects, zoom_in=clip_number % 2 == 1)
+                _render_video_shot(shot, source, shot_length, out, font, effects)
             else:
                 _render_image_shot(shot, source, shot_length, out, font)
             parts.append(out)

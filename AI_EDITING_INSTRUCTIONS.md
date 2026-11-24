@@ -950,7 +950,7 @@ and renders the video (1920x1080). Everything happens in
      photo** unless its clips alone roughly fill its voice-over; a scene
      made only of clips that are too short plays its last clip on past the
      range you gave.
-   - The app adds its own look to every clip (slow zoom, a bit more
+   - The app adds its own look to every clip (a 10% zoom, a bit more
      colour and contrast, light sharpening and vignette) — don't pick
      clips for being colourful, pick them for showing the right moment.
    - Captions and titles in the voice-over language. Don't put `|` inside

@@ -84,6 +84,9 @@ each time:
   describes, for the instruction given with it.
 - **"Mode 5"** means: do exactly what "Mode 5 — AI review parts" below
   describes, for the instruction given with it.
+- **"Mode 6"** means: do exactly what "Mode 6 — Video from a script"
+  below describes. There's no transcript in this mode: everything comes
+  from `workspace/script_video/brief.md`.
 
 ### Project settings and translation
 
@@ -841,6 +844,136 @@ user's instruction (what to agree with, what to argue about, what to add).
 
 If the user asks for changes afterwards, rewrite the whole
 `workspace/additions.md`, as in Mode 4.
+
+### Mode 6 — Video from a script
+
+A brand-new video with no source video to edit: you write (or take) the
+script, split it into scenes, and pick **real** footage and photos found
+online for every scene. The app downloads them, voices each scene with TTS
+and renders the video (1920x1080). Everything happens in
+`workspace/script_video/`.
+
+1. **Read `workspace/script_video/brief.md`.** It says where the script
+   comes from, the voice-over language, the target length and the topic:
+   - `research` — research the topic yourself (web search) and write the
+     script.
+   - `resources` — write it from the user's links/texts in the brief
+     (read every link); you may check facts and fill gaps online.
+   - `own` — the script in the brief is the user's: **keep its wording**
+     (fix only obvious typos and the TTS spelling below), just split it
+     into scenes and find the visuals.
+2. **Facts.** Only real, checked facts. Prefer several reliable sources;
+   when they disagree, say so in the script or pick the safest wording,
+   and never invent quotes, numbers, dates or scores. Put the sources
+   under `## CREDITS` (see the format).
+3. **The script.** Written for the ear, in the brief's language, at about
+   2.3 words per second (3 minutes ≈ 400 words): short sentences, a hook
+   in the first scene, a clear structure (e.g. intro → stages/rounds →
+   result → question to viewers), and a short call to comment or
+   subscribe at the end. Every rule in "Spelling for text-to-speech"
+   (Mode 2) applies — `ё`, numbers and scores as words («тридцать —
+   двадцать семь»), no `самому`, abbreviations spelled the way they're
+   said («Ю-эф-си»), full punctuation.
+4. **Scenes.** One scene = one paragraph of voice-over (usually 8–30
+   seconds) plus the shots shown while it's read. Change scene whenever
+   the picture should change topic (intro, each round, the result...).
+5. **Finding visuals — real media only.** Never use AI-generated images
+   or video, and skip anything that looks AI-made or AI-"enhanced"
+   (warped faces/hands, morphing frames). In order of preference:
+   - **Free/open:** Wikimedia Commons (public domain or CC — note the
+     licence and author for credits), official government/press photos in
+     the public domain, Pexels/Pixabay/Unsplash (use the direct image
+     file link).
+   - **The real event on YouTube:** official channels first (e.g. UFC,
+     the league, the team, the broadcaster), then re-uploads of the
+     broadcast. Avoid uploads with burned-in text, their own commentary
+     overlays, heavy logos, game footage (EA UFC etc.) or slideshow
+     "highlights" made of photos with Getty/AP watermarks.
+   - Footage and photos owned by others (UFC, broadcasters) may bring a
+     YouTube copyright claim — list them in `## CREDITS` and mention the
+     risk in your chat reply. Prefer free photos wherever they do the job
+     (portraits, places, logos).
+   Match the picture to the words: the knockdown when the voice describes
+   the knockdown, the person when they're named. Mix footage and photos;
+   aim for a new shot every 2–6 seconds.
+   **Video footage is required — but in moderation.** Clips are the
+   highlights; photos (which the app slowly zooms) carry the rest, so the
+   video doesn't cut every couple of seconds:
+   - every clip is **2–4.5 seconds** (the app never plays more than 4.5 s
+     of one clip), ideally ~3 s of one clean action;
+   - all clips together make up **a sixth to a quarter of the video** —
+     about **30–45 seconds of clips in a 3-minute video** (e.g. ten to
+     fifteen 3-second clips), **not more**;
+   - most scenes get one or two clips; put them where the action is (the
+     fight, the launch, the moment described), and photos where a face, a
+     place or a document is enough;
+   - each photo stays on screen about **3–6 seconds**, so give a scene
+     enough photos to fill its voice-over around its clips.
+   The app shows the totals ("video N s, aim for M–K s") and warns when
+   there's too little or too much footage.
+6. **Video timings.** Each video shot needs the exact range to use. If you
+   can run commands, check the footage yourself before writing (download
+   with `yt-dlp`, look at frames with `ffmpeg`). Otherwise give your best
+   estimate — the app's contact sheets let you fix it in the footage
+   check (step 9). Ranges should be 2–4.5 seconds of one clean action; avoid
+   cuts/transitions inside a range, frames with someone else's channel
+   logo or text, and the uploader's intro/outro or "subscribe" cards. Add
+   `crop` when the bottom of the frame has a scoreboard or a logo to hide
+   (it keeps the top 85%).
+7. **Write `workspace/script_video/shots.md` in exactly this format:**
+
+   ```
+   # <Video title>
+
+   ## Scene 1 | <short scene name>
+   <The voice-over text of the scene — exactly what's read aloud.>
+
+   - video | <YouTube or other video link> | <start>-<end> | <options>
+   - image | <Wikimedia File: page or direct image link> | <seconds> | <options>
+
+   ## Scene 2 | <name>
+   ...
+
+   ## CREDITS
+   - <photo: title — author, licence>
+   - <footage: channel/owner — link>
+   - <fact sources: site — link>
+   ```
+
+   - Times are `M:SS.s` (or `H:MM:SS.s`) in the source video, e.g.
+     `0:50.0-0:52.8`. Image seconds are a plain number (default 3).
+   - Options, separated by ` | `: `crop`; `caption: <text>` (lower-third
+     text, e.g. a name or a place — short); `title: <text>` (big label
+     top-left for the first 2.5 s, e.g. `title: РАУНД 1`); `zoom: out`
+     (images zoom in slowly by default).
+   - Image links: a Wikimedia Commons `File:` page link works; any other
+     link must point at the image file itself (.jpg/.png/.webp).
+   - How the app fits shots to a scene's voice-over (≈ words ÷ 2.3
+     seconds): clips play their own range (at most 4.5 s), **photos take
+     up the rest**, shared evenly. So give **every scene at least one
+     photo** unless its clips alone roughly fill its voice-over; a scene
+     made only of clips that are too short plays its last clip on past the
+     range you gave.
+   - The app adds its own look to every clip (a 10% zoom, a bit more
+     colour and contrast, light sharpening and vignette) — don't pick
+     clips for being colourful, pick them for showing the right moment.
+   - Captions and titles in the voice-over language. Don't put `|` inside
+     a caption.
+8. After writing the file, reply in chat with: the title, the scene list
+   with estimated lengths, the total length, which shots are copyrighted
+   footage, and any doubts about facts.
+9. **Footage check** (when asked to "do the Mode 6 footage check"): the
+   app has downloaded everything and made contact sheets in
+   `workspace/script_video/sheets/` — `README.md` there says which video
+   each sheet shows and the time between frames; each frame has its time
+   in the video in yellow. Look at the sheets for every video shot and fix
+   its range in `shots.md` so it shows what the scene's words describe
+   (and nothing from step 6's "avoid" list). Replace a shot whose video
+   turns out unusable. Keep everything else as it is, then reply with
+   what you changed.
+
+If the user asks for changes afterwards, rewrite the whole `shots.md` —
+the app loads the latest version when they press "Load Claude's script".
 
 ---
 

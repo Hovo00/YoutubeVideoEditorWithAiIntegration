@@ -21,7 +21,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import azure_tts, broll, duration_fit, pauses, youtube_ingest
+from . import azure_tts, broll, duration_fit, pauses, script_video, youtube_ingest
 from .additions import build_script, merge_additions, parse_additions
 from .chunker import TextChunk, chunk_by_outline, chunk_kept_cues, kept_cues
 from .editor import (
@@ -83,6 +83,8 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="VideoEditorY")
+# Work type 3, "Video from a script" — see backend/script_video.py.
+app.include_router(script_video.router)
 
 # project_id -> {video_path, duration, status, phase, phase_message,
 #                progress, output_path, error, vtt_text, source_url, language}

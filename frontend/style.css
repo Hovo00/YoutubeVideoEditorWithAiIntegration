@@ -783,3 +783,161 @@ td.time {
   height: 32px;
   max-width: 100%;
 }
+
+/* Step 1: what the user starts from (edit a YouTube video / a script). */
+.start-modes {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.start-mode {
+  flex: 1;
+  min-width: 220px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.start-mode small {
+  display: block;
+  font-weight: normal;
+  color: #999;
+  margin: 4px 0 0 22px;
+}
+
+.start-mode:has(input:checked) {
+  border-color: #2563eb;
+  background: #15213d;
+}
+
+/* Work type 3: video from a script. */
+.row.wrap {
+  flex-wrap: wrap;
+}
+
+.sv-label {
+  display: block;
+  margin: 12px 0 6px;
+  color: #ccc;
+}
+
+.sv-problems {
+  background: #3b1d1d;
+  border-left: 3px solid #ef4444;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 0.9em;
+  white-space: pre-line;
+}
+
+.sv-scene {
+  background: #161616;
+  border-left: 3px solid #2563eb;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-top: 14px;
+}
+
+.sv-scene-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: bold;
+  margin-bottom: 8px;
+}
+
+.sv-shot {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #262626;
+}
+
+.sv-thumb {
+  width: 160px;
+  height: 90px;
+  flex-shrink: 0;
+  object-fit: cover;
+  background: #0c0c0c;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 0.8em;
+  text-align: center;
+}
+
+.sv-shot-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.sv-shot-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.sv-shot-line input[type="text"] {
+  padding: 6px 8px;
+  min-width: 120px;
+}
+
+.sv-kind {
+  font-size: 0.75em;
+  text-transform: uppercase;
+  background: #2a2a2a;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.sv-link {
+  flex: 1;
+  min-width: 0;
+  color: #7aa2f7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  font-size: 0.85em;
+}
+
+.sv-timing {
+  max-width: 150px;
+  flex: 0 0 150px !important;
+}
+
+#svMinutesInput,
+#svMusicDbInput {
+  background: #111;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.sv-stats {
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: 0.9em;
+}
+
+.sv-stats.ok {
+  background: #14291b;
+  border-left: 3px solid #22c55e;
+}
+
+.sv-stats.low {
+  background: #33280f;
+  border-left: 3px solid #f59e0b;
+}

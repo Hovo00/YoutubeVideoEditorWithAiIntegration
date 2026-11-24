@@ -28,6 +28,11 @@
     </header>
 
     <section class="step" id="step1">
+      <div class="start-modes" role="radiogroup">
+        <label class="start-mode"><input type="radio" name="startMode" value="edit" checked /> <span data-i18n="start_mode_edit">Edit a YouTube video</span><small data-i18n="start_mode_edit_hint">re-voice it, or review a review</small></label>
+        <label class="start-mode"><input type="radio" name="startMode" value="script" /> <span data-i18n="start_mode_script">New video from a script</span><small data-i18n="start_mode_script_hint">Claude writes it and finds real footage and photos</small></label>
+      </div>
+      <div id="editStartBlock">
       <h2 data-i18n="step1_heading">1. Paste a YouTube link</h2>
       <p class="muted" data-i18n="step1_desc">
         The app downloads the video and transcribes it locally with Whisper — no manual
@@ -59,6 +64,82 @@
       <div id="ingestStatus" class="muted"></div>
       <video id="preview" class="video" controls style="display:none"></video>
       <div id="videoInfo" class="muted"></div>
+      </div>
+    </section>
+
+    <!-- Work type 3: a new video from a script (frontend/script_video.js) -->
+    <section class="step sv-step" id="svBrief" style="display:none">
+      <h2 data-i18n="sv_brief_heading">2. Script — what is the video about?</h2>
+      <div class="row">
+        <label for="svSourceSelect" data-i18n="sv_source_label">Script</label>
+        <select id="svSourceSelect">
+          <option value="research" data-i18n="sv_source_research">Claude researches the topic and writes it</option>
+          <option value="resources" data-i18n="sv_source_resources">Claude writes it from my resources (links, texts)</option>
+          <option value="own" data-i18n="sv_source_own">I have my own script — Claude only finds the visuals</option>
+        </select>
+      </div>
+      <label for="svTopicInput" class="sv-label" data-i18n="sv_topic_label">Topic / instruction</label>
+      <textarea id="svTopicInput" rows="3" data-i18n-placeholder="sv_topic_placeholder"></textarea>
+      <label for="svMaterialInput" class="sv-label" id="svMaterialLabel" data-i18n="sv_material_resources_label">Resources (links and/or texts)</label>
+      <textarea id="svMaterialInput" rows="6" data-i18n-placeholder="sv_material_placeholder"></textarea>
+      <div class="row">
+        <label for="svLanguageSelect" data-i18n="sv_language_label">Voice-over language</label>
+        <select id="svLanguageSelect">
+          <option value="Russian" data-i18n="lang_option_russian">Russian</option>
+          <option value="English" data-i18n="lang_option_english">English</option>
+        </select>
+        <label for="svMinutesInput" data-i18n="sv_minutes_label">Length, minutes</label>
+        <input type="number" id="svMinutesInput" value="3" min="0.5" max="30" step="0.5" style="width:5em" />
+      </div>
+      <div class="row">
+        <button id="svCopyBriefBtn" data-i18n="sv_copy_brief_button">Save &amp; copy the message for Claude</button>
+        <button id="svLoadShotsBtn" class="secondary-btn" data-i18n="sv_load_button">Load Claude's script</button>
+      </div>
+      <p class="muted" data-i18n-html="sv_brief_help_html"></p>
+      <div id="svBriefStatus" class="muted"></div>
+    </section>
+
+    <section class="step sv-step" id="svShots" style="display:none">
+      <h2 data-i18n="sv_shots_heading">3. Scenes and footage</h2>
+      <h3 id="svTitle"></h3>
+      <div id="svProblems" class="sv-problems" style="display:none"></div>
+      <p class="muted" data-i18n="sv_shots_desc">Each scene's text is read aloud while its shots play in order. Video clips play up to 4.5 s each; photos take up the rest of the scene's voice-over. You can edit the text, timings and captions here.</p>
+      <div id="svStats" class="sv-stats"></div>
+      <div id="svScenes"></div>
+      <div class="row wrap">
+        <button id="svFetchBtn" data-i18n="sv_fetch_button">Download footage</button>
+        <button id="svSaveBtn" class="secondary-btn" data-i18n="sv_save_button">Save changes</button>
+        <button id="svCopyCheckBtn" class="secondary-btn" data-i18n="sv_copy_check_button">Copy message for Claude: check the footage</button>
+      </div>
+      <p class="muted" data-i18n="sv_check_help">After downloading, the app makes contact sheets of every video (frames with their times) in workspace/script_video/sheets/. Claude can look at them and fix the clip timings; then press "Load Claude's script" again.</p>
+      <div id="svShotsStatus" class="muted"></div>
+    </section>
+
+    <section class="step sv-step" id="svRender" style="display:none">
+      <h2 data-i18n="sv_render_heading">4. Voice &amp; render</h2>
+      <div class="row">
+        <label for="svVoiceSelect" data-i18n="sv_voice_label">Voice</label>
+        <select id="svVoiceSelect"></select>
+      </div>
+      <div class="row wrap">
+        <label for="svMusicSelect" data-i18n="sv_music_label">Background music</label>
+        <select id="svMusicSelect"></select>
+        <button type="button" id="svMusicAddBtn" class="link-btn" data-i18n="host_music_add_button">Add a track…</button>
+        <input type="file" id="svMusicFileInput" accept=".mp3,.m4a,.aac,.wav,.ogg,.opus,.flac,audio/*" style="display:none" />
+        <label id="svMusicVolume"><span data-i18n="volume_label">Volume:</span> <input type="number" id="svMusicDbInput" value="-24" step="1" style="width:4em" /> <span data-i18n="db_label">dB</span></label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="svClipEffectsCheck" checked /> <span data-i18n="sv_clip_effects_label">Clip effects: 10% zoom, a little more colour and contrast, light sharpening and vignette</span></label>
+      </div>
+      <div class="row">
+        <button id="svRenderBtn" data-i18n="sv_render_button">Voice &amp; render the video</button>
+      </div>
+      <div id="svRenderStatus" class="muted"></div>
+      <div class="row wrap">
+        <a id="svDownloadLink" class="download" style="display:none" target="_blank" data-i18n="download_link_text">Download edited video</a>
+        <a id="svCreditsLink" class="link-btn" style="display:none" target="_blank" data-i18n="sv_credits_link">Credits (sources used)</a>
+      </div>
+      <video id="svPreview" class="video" controls style="display:none"></video>
     </section>
 
     <section class="step" id="stepProject" style="display:none">
@@ -341,5 +422,6 @@
   <script src="/i18n.js"></script>
   <script src="/app.js"></script>
   <script src="/broll.js"></script>
+  <script src="/script_video.js"></script>
 </body>
 </html>

@@ -45,6 +45,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass, field
@@ -338,17 +339,31 @@ def _image_cache_path(url: str) -> Path | None:
     return found[0] if found else None
 
 
+HTTP_RETRY_WAITS = (5, 15, 30, 60)  # seconds, when a site says "too many requests"
+
+
 def _http_get(url: str, timeout: float = 60) -> tuple[bytes, str]:
+    """GET with retries on 429/503 (Wikimedia rate-limits quick bursts),
+    honouring Retry-After when the site sends it."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read(), response.headers.get("Content-Type", "")
+    for attempt in range(len(HTTP_RETRY_WAITS) + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read(), response.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (429, 503) or attempt == len(HTTP_RETRY_WAITS):
+                raise
+            retry_after = exc.headers.get("Retry-After", "")
+            wait = float(retry_after) if retry_after.isdigit() else HTTP_RETRY_WAITS[attempt]
+            time.sleep(min(wait, 60))
+    raise RuntimeError("unreachable")
 
 
 _COMMONS_FILE_RE = re.compile(r"(?:commons|[a-z]{2,3})\.(?:m\.)?wikipedia\.org/wiki/(File:[^?#]+)|commons\.wikimedia\.org/wiki/(File:[^?#]+)")
 
 
 def _resolve_image_url(url: str) -> str:
-    """A Wikimedia Commons / Wikipedia `File:` page -> a 2000px-wide image URL.
+    """A Wikimedia Commons / Wikipedia `File:` page -> a 1920px-wide image URL (a standard size Wikimedia keeps cached).
     Any other link is used as it is (it has to point at the image itself)."""
     match = _COMMONS_FILE_RE.search(url)
     if not match:
@@ -356,7 +371,7 @@ def _resolve_image_url(url: str) -> str:
     title = urllib.parse.unquote(match.group(1) or match.group(2))
     api = (
         "https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=imageinfo"
-        "&iiprop=url&iiurlwidth=2000&titles=" + urllib.parse.quote(title)
+        "&iiprop=url&iiurlwidth=1920&titles=" + urllib.parse.quote(title)
     )
     data = json.loads(_http_get(api)[0])
     page = next(iter(data["query"]["pages"].values()))
@@ -668,7 +683,10 @@ def _fetch_all(plan: Plan) -> None:
                     _set(message=f"Downloading video {label}… {frac * 100:.0f}%", progress=base + frac / len(unique))
                 download_video(url, progress)
             else:
+                fresh = _image_cache_path(url) is None
                 download_image(url)
+                if fresh:
+                    time.sleep(1.0)  # be gentle with Wikimedia's rate limit
         except Exception as exc:
             failures.append(f"{url}: {exc}")
     _set(message="Making contact sheets for Claude…")

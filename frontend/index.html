@@ -103,7 +103,8 @@
       <h2 data-i18n="sv_shots_heading">3. Scenes and footage</h2>
       <h3 id="svTitle"></h3>
       <div id="svProblems" class="sv-problems" style="display:none"></div>
-      <p class="muted" data-i18n="sv_shots_desc">Each scene's text is read aloud; its shots play under it in order, and the last shot of a scene stretches or shrinks to fit the voice-over. You can edit the text, timings and captions here.</p>
+      <p class="muted" data-i18n="sv_shots_desc">Each scene's text is read aloud while its shots play in order. Video clips play up to 4.5 s each; photos take up the rest of the scene's voice-over. You can edit the text, timings and captions here.</p>
+      <div id="svStats" class="sv-stats"></div>
       <div id="svScenes"></div>
       <div class="row wrap">
         <button id="svFetchBtn" data-i18n="sv_fetch_button">Download footage</button>
@@ -126,6 +127,9 @@
         <button type="button" id="svMusicAddBtn" class="link-btn" data-i18n="host_music_add_button">Add a track…</button>
         <input type="file" id="svMusicFileInput" accept=".mp3,.m4a,.aac,.wav,.ogg,.opus,.flac,audio/*" style="display:none" />
         <label id="svMusicVolume"><span data-i18n="volume_label">Volume:</span> <input type="number" id="svMusicDbInput" value="-24" step="1" style="width:4em" /> <span data-i18n="db_label">dB</span></label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="svClipEffectsCheck" checked /> <span data-i18n="sv_clip_effects_label">Clip effects: slow zoom, a little more colour and contrast, light sharpening and vignette</span></label>
       </div>
       <div class="row">
         <button id="svRenderBtn" data-i18n="sv_render_button">Voice &amp; render the video</button>

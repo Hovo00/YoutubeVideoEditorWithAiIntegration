@@ -30,8 +30,9 @@ shots.md format (see Mode 6 for the full rules Claude follows):
 Shot options: `crop` (cut off the bottom of the frame — a lower-third
 scoreboard or someone's logo), `caption: …` (lower-third text), `title: …`
 (big label in the top-left for the first seconds), `zoom: in|out` (images).
-The last shot of a scene stretches or shrinks so the scene lasts exactly as
-long as its voice-over.
+Video clips play at most MAX_CLIP_SECONDS (4.5 s) each, with a slow zoom
+and a light colour look; photos take up whatever time the scene's
+voice-over needs beyond its clips (see fit_lengths).
 """
 
 from __future__ import annotations
@@ -83,6 +84,23 @@ WIDTH, HEIGHT, FPS = 1920, 1080, 30
 VOICE_DELAY = 0.15      # silence before a scene's voice-over starts
 SCENE_TAIL = 0.5        # silence after it, before the next scene
 DEFAULT_IMAGE_SECONDS = 3.0
+# Video clips are short and lively: at most MAX_CLIP_SECONDS each, and the
+# footage should add up to about FOOTAGE_SHARE of the video (30 s in 3 min).
+MAX_CLIP_SECONDS = 4.5
+MIN_CLIP_SECONDS = 1.0
+MIN_IMAGE_SECONDS = 1.5
+FOOTAGE_SHARE = 1 / 6
+WORDS_PER_SECOND = 2.3
+# The "look" of every video clip (can be turned off in the app): a slow
+# zoom (alternating in/out), a little more saturation and contrast, a
+# touch of warmth, light sharpening and a soft vignette.
+CLIP_ZOOM = 0.06
+CLIP_LOOK = ",".join([
+    "eq=saturation=1.15:contrast=1.06:brightness=0.01",
+    "colorbalance=rs=0.03:gs=0.01:bs=-0.03",
+    "unsharp=5:5:0.35",
+    "vignette=angle=PI/6",
+])
 TITLE_SECONDS = 2.5
 MUSIC_FADE_OUT = 2.0
 # `crop`: keep the top 85% (centred), which drops a broadcast lower third.
@@ -115,8 +133,9 @@ class Shot:
 
     @property
     def length(self) -> float:
+        """How long the shot plays before fitting (a clip at most MAX_CLIP_SECONDS)."""
         if self.kind == "video" and self.start is not None and self.end is not None:
-            return max(0.0, self.end - self.start)
+            return min(MAX_CLIP_SECONDS, max(0.0, self.end - self.start))
         return self.seconds or DEFAULT_IMAGE_SECONDS
 
 
@@ -480,12 +499,16 @@ def _overlays(shot: Shot, font: str, length: float) -> list[str]:
     return filters
 
 
-def _render_video_shot(shot: Shot, source: Path, length: float, out: Path, font: str) -> None:
-    """The shot's range from the source, `length` long: a shorter range holds
-    its last frame, a longer one is cut."""
+def _render_video_shot(
+    shot: Shot, source: Path, length: float, out: Path, font: str, effects: bool = True, zoom_in: bool = True,
+) -> None:
+    """`length` seconds of the source from the shot's start (it plays on
+    past the range's end if the scene needs it; the source's own end holds
+    its last frame). With `effects`, CLIP_LOOK and a slow zoom are applied."""
     duration = get_duration(str(source))
     start = min(max(0.0, shot.start or 0.0), max(0.0, duration - 0.5))
     available = max(0.1, min(duration - start, length))
+    frames = max(1, round(length * FPS))
     vf = [CROP_FILTER] if shot.crop else []
     vf += [
         f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease",
@@ -493,8 +516,17 @@ def _render_video_shot(shot: Shot, source: Path, length: float, out: Path, font:
         f"fps={FPS}", "setsar=1",
         f"tpad=stop_mode=clone:stop_duration={length:.3f}",
         f"trim=duration={length:.3f}",
-        *_overlays(shot, font, length),
     ]
+    if effects:
+        zoom = f"1+{CLIP_ZOOM}*on/{frames}" if zoom_in else f"1+{CLIP_ZOOM}-{CLIP_ZOOM}*on/{frames}"
+        # Zooming on a 2x frame keeps the slow movement smooth (no jitter).
+        vf += [
+            f"scale={WIDTH * 2}:{HEIGHT * 2}",
+            f"zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={WIDTH}x{HEIGHT}:fps={FPS}",
+            "setsar=1",
+            CLIP_LOOK,
+        ]
+    vf += _overlays(shot, font, length)
     _ffmpeg(["-ss", f"{start:.3f}", "-t", f"{available:.3f}", "-i", str(source), "-an",
              "-vf", ",".join(vf), "-frames:v", str(round(length * FPS)), *ENCODE, str(out)])
 
@@ -519,26 +551,57 @@ def _render_image_shot(shot: Shot, source: Path, length: float, out: Path, font:
 
 
 def fit_lengths(shots: list[Shot], total: float) -> list[float]:
-    """Shot lengths that add up to `total`: the last shot takes up the slack;
-    if the others are already too long, shots are cut from the end."""
+    """Shot lengths that add up to `total` (the scene's voice-over).
+
+    Clips keep their own length (at most MAX_CLIP_SECONDS); photos take up
+    the slack, shared evenly. A scene without photos lengthens its clips
+    evenly up to MAX_CLIP_SECONDS, then the last one plays on. When the
+    shots are too long, photos shrink first, then clips from the end."""
     lengths = [s.length for s in shots]
-    lengths[-1] = 0.0
-    remaining = total - sum(lengths)
-    if remaining >= 1.0:
-        lengths[-1] = remaining
+    images = [i for i, s in enumerate(shots) if s.kind == "image"]
+    videos = [i for i, s in enumerate(shots) if s.kind == "video"]
+    slack = total - sum(lengths)
+    if slack > 0:
+        if images:
+            for i in images:
+                lengths[i] += slack / len(images)
+            return lengths
+        while slack > 1e-6:
+            growable = [i for i in videos if lengths[i] < MAX_CLIP_SECONDS - 1e-6]
+            if not growable:
+                lengths[videos[-1]] += slack
+                break
+            share = slack / len(growable)
+            for i in growable:
+                grow = min(share, MAX_CLIP_SECONDS - lengths[i])
+                lengths[i] += grow
+                slack -= grow
         return lengths
-    # Too long: shorten from the end until the last shot gets at least 1 s.
-    lengths[-1] = 1.0
-    excess = sum(lengths) - total
-    for index in range(len(lengths) - 2, -1, -1):
-        if excess <= 0:
-            break
-        cut = min(excess, max(0.0, lengths[index] - 0.5))
-        lengths[index] -= cut
-        excess -= cut
-    if excess > 0:
-        lengths[-1] = max(0.3, lengths[-1] - excess)
+    excess = -slack
+    for indices, floor in ((images, MIN_IMAGE_SECONDS), (videos, MIN_CLIP_SECONDS)):
+        for i in reversed(indices):
+            if excess <= 1e-6:
+                return lengths
+            cut = min(excess, max(0.0, lengths[i] - floor))
+            lengths[i] -= cut
+            excess -= cut
+    if excess > 1e-6:  # Every shot is at its minimum: drop the rest evenly.
+        lengths = [max(0.3, length - excess / len(lengths)) for length in lengths]
     return lengths
+
+
+def estimate_seconds(text: str) -> float:
+    return len(text.split()) / WORDS_PER_SECOND + VOICE_DELAY + SCENE_TAIL
+
+
+def footage_stats(plan: Plan) -> dict:
+    """Rough totals for the app: how long the video will be, how much of it
+    is video footage, and how much footage FOOTAGE_SHARE asks for."""
+    total = sum(estimate_seconds(scene.text) for scene in plan.scenes)
+    footage = sum(s.length for scene in plan.scenes for s in scene.shots if s.kind == "video")
+    clips = sum(1 for scene in plan.scenes for s in scene.shots if s.kind == "video")
+    return {"total": round(total, 1), "footage": round(footage, 1), "clips": clips,
+            "target": round(total * FOOTAGE_SHARE, 1)}
 
 
 def synthesize(text: str, voice: str, base: Path) -> Path:
@@ -661,8 +724,9 @@ def _write_thumbnails(plan: Plan) -> None:
                     pass
 
 
-def _render(plan: Plan, voice: str, music: str, music_db: float) -> None:
+def _render(plan: Plan, voice: str, music: str, music_db: float, effects: bool = True) -> None:
     font = _font()
+    clip_number = 0  # alternates the clips' zoom in / out
     for folder in (VOICE_DIR, SEGMENTS_DIR):
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True)
@@ -685,7 +749,8 @@ def _render(plan: Plan, voice: str, music: str, music_db: float) -> None:
             out = SEGMENTS_DIR / f"s{index:03d}_{number:02d}.mp4"
             source = media_path(shot)
             if shot.kind == "video":
-                _render_video_shot(shot, source, shot_length, out, font)
+                clip_number += 1
+                _render_video_shot(shot, source, shot_length, out, font, effects, zoom_in=clip_number % 2 == 1)
             else:
                 _render_image_shot(shot, source, shot_length, out, font)
             parts.append(out)
@@ -760,7 +825,8 @@ def _public_plan(plan: Plan, problems: list[str]) -> dict:
             shots.append(data)
         scenes.append({"title": scene.title, "text": scene.text, "shots": shots})
     return {"title": plan.title, "credits": plan.credits, "scenes": scenes, "problems": problems,
-            "has_sheets": (SHEETS_DIR / "README.md").exists()}
+            "has_sheets": (SHEETS_DIR / "README.md").exists(), "stats": footage_stats(plan),
+            "max_clip": MAX_CLIP_SECONDS}
 
 
 @router.post("/brief")
@@ -838,14 +904,16 @@ def fetch():
 
 
 @router.post("/render")
-def render(voice: str = Form(...), music: str = Form(""), music_db: float = Form(-24.0)):
+def render(
+    voice: str = Form(...), music: str = Form(""), music_db: float = Form(-24.0), clip_effects: bool = Form(True),
+):
     if voice not in PIPER_KNOWN_VOICES and voice not in azure_tts.KNOWN_VOICES:
         raise HTTPException(400, f"Unknown voice: {voice}")
     if music and not (MUSIC_DIR / Path(music).name).is_file():
         raise HTTPException(404, f"No saved music track named {music!r}.")
     plan = _load_plan()
     JOB.update(output=None, credits=None)
-    _start_job(_render, plan, voice, music, music_db)
+    _start_job(_render, plan, voice, music, music_db, clip_effects)
     return {"status": "started"}
 
 

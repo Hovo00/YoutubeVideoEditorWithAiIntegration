@@ -924,3 +924,20 @@ td.time {
   border-radius: 6px;
   padding: 8px;
 }
+
+.sv-stats {
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: 0.9em;
+}
+
+.sv-stats.ok {
+  background: #14291b;
+  border-left: 3px solid #22c55e;
+}
+
+.sv-stats.low {
+  background: #33280f;
+  border-left: 3px solid #f59e0b;
+}

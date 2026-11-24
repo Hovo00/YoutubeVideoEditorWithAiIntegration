@@ -896,11 +896,22 @@ and renders the video (1920x1080). Everything happens in
    Match the picture to the words: the knockdown when the voice describes
    the knockdown, the person when they're named. Mix footage and photos;
    aim for a new shot every 2–6 seconds.
+   **Video footage is required, not optional.** Moving pictures are what
+   keep the video interesting, so:
+   - every clip is **2–4.5 seconds** (the app never plays more than 4.5 s
+     of one clip), ideally ~3 s of one clean action;
+   - all clips together make up **at least a sixth of the video** — about
+     **30 seconds of clips in a 3-minute video** (e.g. ten 3-second
+     clips), more if good footage exists;
+   - put clips where the action is (the fight, the moment described), and
+     photos where a face, a place or a document is enough.
+   The app shows the totals ("video N s, target M s") and warns when
+   there's too little footage.
 6. **Video timings.** Each video shot needs the exact range to use. If you
    can run commands, check the footage yourself before writing (download
    with `yt-dlp`, look at frames with `ffmpeg`). Otherwise give your best
    estimate — the app's contact sheets let you fix it in the footage
-   check (step 9). Ranges should be 2–8 seconds of one clean action; avoid
+   check (step 9). Ranges should be 2–4.5 seconds of one clean action; avoid
    cuts/transitions inside a range, frames with someone else's channel
    logo or text, and the uploader's intro/outro or "subscribe" cards. Add
    `crop` when the bottom of the frame has a scoreboard or a logo to hide
@@ -933,11 +944,15 @@ and renders the video (1920x1080). Everything happens in
      (images zoom in slowly by default).
    - Image links: a Wikimedia Commons `File:` page link works; any other
      link must point at the image file itself (.jpg/.png/.webp).
-   - A shot's own length counts, except the **last shot of each scene**,
-     which stretches or shrinks so the scene lasts as long as its
-     voice-over. Make the shots of a scene add up to roughly its
-     voice-over length (≈ words ÷ 2.3 seconds) and make the last shot one
-     that can run longer (a longer video range, or a photo).
+   - How the app fits shots to a scene's voice-over (≈ words ÷ 2.3
+     seconds): clips play their own range (at most 4.5 s), **photos take
+     up the rest**, shared evenly. So give **every scene at least one
+     photo** unless its clips alone roughly fill its voice-over; a scene
+     made only of clips that are too short plays its last clip on past the
+     range you gave.
+   - The app adds its own look to every clip (slow zoom, a bit more
+     colour and contrast, light sharpening and vignette) — don't pick
+     clips for being colourful, pick them for showing the right moment.
    - Captions and titles in the voice-over language. Don't put `|` inside
      a caption.
 8. After writing the file, reply in chat with: the title, the scene list

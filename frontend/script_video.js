@@ -158,12 +158,32 @@ function showPlan(plan) {
   problems.textContent = plan.problems.length ? t("sv_problems") + "\n" + plan.problems.join("\n") : "";
   problems.style.display = plan.problems.length ? "block" : "none";
   renderScenes();
+  renderStats();
   if (startMode() === "script") {
     document.getElementById("svShots").style.display = "block";
     document.getElementById("svRender").style.display = "block";
     loadSvVoices();
     loadSvMusic();
   }
+}
+
+// Totals from the server: estimated length, video footage, and the target
+// (about a sixth of the video, e.g. 30 s of clips in 3 minutes).
+function renderStats() {
+  const stats = sv.plan.stats;
+  const el = document.getElementById("svStats");
+  if (!stats) {
+    el.textContent = "";
+    return;
+  }
+  const enough = stats.footage >= stats.target;
+  el.className = "sv-stats " + (enough ? "ok" : "low");
+  el.textContent = t(enough ? "sv_stats_ok" : "sv_stats_low", {
+    total: formatSvTime(stats.total).replace(/\.\d$/, ""),
+    footage: Math.round(stats.footage),
+    clips: stats.clips,
+    target: Math.round(stats.target),
+  });
 }
 
 function markDirty() {
@@ -189,7 +209,11 @@ function renderScenes() {
     const words = document.createElement("span");
     words.className = "muted";
     // ~2.3 words a second for a calm voice-over.
-    words.textContent = `≈ ${Math.round(scene.text.split(/\s+/).filter(Boolean).length / 2.3)} ${t("sv_seconds_short")}`;
+    const seconds = Math.round(scene.text.split(/\s+/).filter(Boolean).length / 2.3);
+    const footage = scene.shots
+      .filter((s) => s.kind === "video")
+      .reduce((sum, s) => sum + Math.min(sv.plan.max_clip || 4.5, s.end - s.start), 0);
+    words.textContent = t("sv_scene_lengths", { seconds, footage: Math.round(footage) });
     head.append(name, words);
 
     const text = document.createElement("textarea");
@@ -463,6 +487,7 @@ document.getElementById("svRenderBtn").addEventListener("click", async () => {
   formData.append("voice", voice);
   formData.append("music", document.getElementById("svMusicSelect").value);
   formData.append("music_db", document.getElementById("svMusicDbInput").value || "-24");
+  formData.append("clip_effects", document.getElementById("svClipEffectsCheck").checked ? "true" : "false");
   document.getElementById("svDownloadLink").style.display = "none";
   document.getElementById("svCreditsLink").style.display = "none";
   document.getElementById("svPreview").style.display = "none";
